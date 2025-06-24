@@ -4,19 +4,19 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 from dotenv import load_dotenv
 from agents import (
-    LlamaExtractAgent, DataValidationAgent, ExcelWriterAgent,
+    LlamaParseAgent, DataValidationAgent, ExcelWriterAgent,
     Context
 )
 
 class InvoiceProcessingWorkflow:
-    """Orchestrates the invoice processing workflow using LlamaExtract"""
+    """Orchestrates the invoice processing workflow using LlamaParse"""
     
     def __init__(self):
         # Load environment variables
         load_dotenv()
         
         # Initialize agents
-        self.extract_agent = LlamaExtractAgent()
+        self.extract_agent = LlamaParseAgent()
         self.validation_agent = DataValidationAgent()
         self.excel_writer_agent = ExcelWriterAgent()
         
@@ -31,7 +31,7 @@ class InvoiceProcessingWorkflow:
         )
         
         try:
-            # 1. Extract data using LlamaExtract (combines OCR and extraction)
+            # 1. Extract data using LlamaParse (Parse with LVM)
             context = await self.extract_agent.process(context)
             
             # 2. Validate the extracted data
