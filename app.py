@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, status
+from fastapi import FastAPI, UploadFile, File, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from pathlib import Path
@@ -47,6 +47,7 @@ def get_unique_filename(directory: str, filename: str) -> str:
 
 @app.post("/process-invoice/")
 async def process_invoice(
+    request: Request,
     file: UploadFile = File(..., description="The invoice file to process (PDF, JPG, PNG)"),
     output_excel: Optional[str] = "invoices.xlsx"
 ):
@@ -87,7 +88,7 @@ async def process_invoice(
             "status": "success",
             "message": "Invoice processed successfully",
             "data": result.get("extracted_data", {}),
-            "excel_file": f"/download/{output_excel}"
+            "excel_file": str(request.base_url) + f"download/{output_excel}"
         }
         
     except Exception as e:

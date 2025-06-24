@@ -23,7 +23,8 @@
         <div id="spinner" class="mt-3 d-none text-center">
           <div class="spinner-border text-primary" role="status"></div>
         </div>
-        <div id="result" class="mt-4"></div>
+        <div id="log" class="mt-4 border rounded p-2" style="font-size:0.9rem; max-height:200px; overflow-y:auto;"></div>
+        <div id="result" class="mt-3"></div>
       </div>
     </div>
   </div>
@@ -35,6 +36,15 @@
     const form = document.getElementById("uploadForm");
     const spinner = document.getElementById("spinner");
     const resultEl = document.getElementById("result");
+    const logEl = document.getElementById("log");
+    let excelUrl = null;
+    function addLog(msg, type="info"){
+      const div=document.createElement('div');
+      div.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;
+      div.className=`text-${type==='error'?'danger':type==='success'?'success':'secondary'}`;
+      logEl.appendChild(div);
+      logEl.scrollTop=logEl.scrollHeight;
+    }
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -48,6 +58,7 @@
       formData.append("file", file);
 
       spinner.classList.remove("d-none");
+      addLog("Uploading and processing invoice...");
 
       try {
         const response = await fetch(`${apiUrl}/process-invoice/`, {
@@ -63,16 +74,41 @@
           return;
         }
 
+        excelUrl = data.excel_file;
         resultEl.innerHTML = `
           <h5 class="mt-3">Extracted Data</h5>
           <pre class="bg-light p-3 border rounded">${JSON.stringify(data.data, null, 2)}</pre>
-          <a href="${data.excel_file}" class="btn btn-success mt-2" target="_blank">Download Excel</a>
+          <button id="downloadBtn" class="btn btn-success mt-2">Download Excel</button>
         `;
+        document.getElementById('downloadBtn').addEventListener('click', downloadExcel);
+        addLog('Extraction complete','success');
       } catch (err) {
         spinner.classList.add("d-none");
         resultEl.innerHTML = `<div class="alert alert-danger">${err.message}</div>`;
+        addLog(err.message,'error');
       }
     });
+
+    async function downloadExcel(){
+      if(!excelUrl) return;
+      try{
+        const res= await fetch(excelUrl);
+        if(!res.ok) throw new Error('Failed to fetch Excel');
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'invoice.xlsx';
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
+        addLog('Excel downloaded','success');
+      }catch(err){
+        addLog(err.message,'error');
+        alert(err.message);
+      }
+    }
   </script>
 </body>
 </html>
