@@ -1,0 +1,9 @@
+[build]
+  publish = "./"  # root contains index.html
+
+# Redirect API calls to Render backend
+[[redirects]]
+  from = "/api/*"
+  to = "https://cole-ocr-llama.onrender.com/:splat"
+  status = 200
+  force = true
