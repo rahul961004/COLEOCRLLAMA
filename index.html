@@ -29,8 +29,8 @@
   </div>
 
   <script>
-    // Netlify will serve this static page; API requests get proxied to Render
-    const apiUrl = "/api";
+    // Updated to use relative path which will be handled by Netlify's redirect
+    const apiUrl = "/.netlify/functions/api";
 
     const form = document.getElementById("uploadForm");
     const spinner = document.getElementById("spinner");
