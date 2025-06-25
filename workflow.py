@@ -27,13 +27,18 @@ class InvoiceProcessingWorkflow:
             is_valid, context = await self.validation_agent.process(context)
             
             if not is_valid:
-                raise ValueError("Failed to validate extracted data")
-            
-            print(f"Successfully processed invoice: {invoice_path}")
+                status = "warning"
+                message = "Validation failed"
+            else:
+                status = "success"
+                message = "Invoice processed successfully"
+
+            print(f"{status.capitalize()} processing invoice: {invoice_path}")
             return {
-                "status": "success",
+                "status": status,
                 "invoice_path": invoice_path,
-                "extracted_data": context.structured_data
+                "extracted_data": context.structured_data or {},
+                "validation_feedback": context.validation_feedback
             }
             
         except Exception as e:
