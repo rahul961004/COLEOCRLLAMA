@@ -45,7 +45,7 @@ class LlamaParseAgent(BaseAgent):
         return base64.b64encode(file_content).decode('utf-8')
 
     async def _call_llama_parse_api(self, file_path: str, use_ocr: bool = False) -> Dict[str, Any]:
-        """Call LlamaParse API with the given file"""
+        """Call LlamaParse API with the given file and return job details"""
         try:
             # Read and encode file
             file_content = await self._read_file(file_path)
@@ -71,7 +71,9 @@ class LlamaParseAgent(BaseAgent):
                         logger.error(f"LlamaParse API error: {response.status} - {error_text}")
                         raise LlamaParseError(f"API Error {response.status}: {error_text}")
                     
-                    return await response.json()
+                    result = await response.json()
+                    logger.info(f"LlamaParse job created: {result.get('job_id')}")
+                    return result
                     
         except asyncio.TimeoutError:
             error_msg = "Request to LlamaParse API timed out"
@@ -87,19 +89,29 @@ class LlamaParseAgent(BaseAgent):
             logger.error(f"Unexpected error in _call_llama_parse_api: {str(e)}", exc_info=True)
             raise LlamaParseError(f"Unexpected error: {str(e)}")
 
-    async def _process_with_parser(self, file_path: str, use_ocr: bool = False) -> Optional[Dict[str, Any]]:
-        """Helper method to process file with optional OCR"""
+    async def _process_with_parser(self, file_path: str, use_ocr: bool = False) -> Dict[str, Any]:
+        """Helper method to process file with optional OCR. Returns job details."""
         try:
             logger.info(f"Processing file with {'OCR ' if use_ocr else ''}parser: {file_path}")
             
             # Call the API
             result = await self._call_llama_parse_api(file_path, use_ocr=use_ocr)
             
-            if not result or not result.get('data'):
+            if not result:
                 logger.warning(f"No content returned from {'OCR ' if use_ocr else ''}parser")
                 return None
                 
-            return result['data']
+            # Extract job details
+            job_id = result.get('job_id')
+            status = result.get('status')
+            data = result.get('data')
+            
+            logger.info(f"Job {job_id} status: {status}")
+            return {
+                'job_id': job_id,
+                'status': status,
+                'data': data
+            }
             
         except Exception as e:
             logger.error(f"Error in {'OCR ' if use_ocr else ''}parser: {str(e)}", exc_info=True)
@@ -123,9 +135,11 @@ class LlamaParseAgent(BaseAgent):
                 if result is None:
                     raise LlamaParseError("Failed to extract data using both standard and OCR parsers")
             
-            # Store results in context
-            context.structured_data = result
-            context.extracted_text = json.dumps(result, indent=2) if isinstance(result, dict) else str(result)
+            # Store job details and results in context
+            context.job_id = result.get('job_id')
+            context.job_status = result.get('status')
+            context.structured_data = result.get('data')
+            context.extracted_text = json.dumps(result.get('data'), indent=2) if isinstance(result.get('data'), dict) else str(result.get('data'))
             
             logger.info("Successfully processed document")
             return context

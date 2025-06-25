@@ -36,53 +36,47 @@ class InvoiceProcessingWorkflow:
         try:
             # 1. Extract data using LlamaParse
             logger.info("Starting data extraction...")
-            try:
-                context = await self.extract_agent.process(context)
-                logger.info("Data extraction completed successfully")
-            except Exception as e:
-                logger.error(f"Extraction failed: {str(e)}", exc_info=True)
-                return {
-                    "status": "error",
-                    "invoice_path": invoice_path,
-                    "error": f"Failed to extract data: {str(e)}",
-                    "details": {"extraction_error": True}
-                }
+            context = await self.extract_agent.process(context)
+            logger.info("Data extraction completed successfully")
             
             # 2. Validate the extracted data
             logger.info("Validating extracted data...")
-            try:
-                is_valid, context = await self.validation_agent.process(context)
-                logger.info(f"Validation {'succeeded' if is_valid else 'failed'}")
-                
-                result = {
-                    "status": "success" if is_valid else "warning",
-                    "message": "Validation passed" if is_valid else "Validation failed",
-                    "invoice_path": invoice_path,
-                    "extracted_data": context.structured_data or {},
-                    "validation_feedback": getattr(context, 'validation_feedback', [])
-                }
-                
-                if not is_valid and hasattr(context, 'validation_feedback'):
-                    logger.warning(f"Validation issues: {context.validation_feedback}")
-                
-                return result
-                
-            except Exception as e:
-                logger.error(f"Validation failed: {str(e)}", exc_info=True)
-                return {
-                    "status": "error",
-                    "invoice_path": invoice_path,
-                    "error": f"Validation error: {str(e)}",
-                    "details": {"validation_error": True},
-                    "extracted_data": getattr(context, 'structured_data', {})
-                }
+            is_valid, context = await self.validation_agent.process(context)
+            logger.info(f"Validation {'succeeded' if is_valid else 'failed'}")
+            
+            # Format the response to match frontend expectations
+            result = {
+                "status": "success" if is_valid else "warning",
+                "message": "Validation passed" if is_valid else "Validation failed",
+                "invoice_path": invoice_path,
+                "job_id": context.job_id if hasattr(context, 'job_id') else None,
+                "data": {
+                    "json": context.structured_data or {},
+                    "markdown": "# Invoice Data\n\n" + json.dumps(context.structured_data, indent=2).replace("\n", "\n\n"),
+                    "text": json.dumps(context.structured_data, indent=2)
+                },
+                "validation_feedback": getattr(context, 'validation_feedback', [])
+            }
+            
+            if not is_valid and hasattr(context, 'validation_feedback'):
+                logger.warning(f"Validation issues: {context.validation_feedback}")
+            
+            return result
             
         except Exception as e:
-            error_msg = f"Unexpected error processing invoice: {str(e)}"
+            error_msg = f"Error processing invoice: {str(e)}"
             logger.error(error_msg, exc_info=True)
+            
+            # Format error response to match frontend expectations
             return {
                 "status": "error",
                 "invoice_path": invoice_path,
                 "error": error_msg,
-                "details": {"unexpected_error": True}
+                "details": {"error_type": type(e).__name__},
+                "job_id": getattr(context, 'job_id', None),
+                "data": {
+                    "json": {},
+                    "markdown": "# Error\n\n" + error_msg,
+                    "text": error_msg
+                }
             }
