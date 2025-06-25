@@ -6,9 +6,11 @@ from dataclasses import dataclass
 class Context:
     """Shared context for workflow state management"""
     invoice_path: str
-    extracted_text: Optional[str] = None
+    job_id: Optional[str] = None
+    status: Optional[str] = None
     structured_data: Optional[Dict[str, Any]] = None
-    validation_feedback: Optional[str] = None
+    markdown_docs: Optional[Any] = None
+    text_docs: Optional[Any] = None
 
 class BaseAgent(ABC):
     """Base class for all agents in the workflow"""

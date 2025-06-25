@@ -18,7 +18,6 @@ class LlamaParseAgent(BaseAgent):
 
     def __init__(
         self,
-        result_type: str = "json",
     ) -> None:
         super().__init__("LlamaParseAgent")
 
@@ -29,83 +28,39 @@ class LlamaParseAgent(BaseAgent):
         # Initialize LlamaParse with premium mode and OCR
         self.parser = LlamaParse(
             api_key=self.llama_api_key,
-            result_type=result_type,
+            result_type="json",
             premium_mode=True,
-            num_workers=1,  # Single file processing
+            num_workers=1,
             verbose=True,
-            language="en"  # Set language explicitly
+            language="en"
         )
 
-    async def _process_with_parser(self, file_path: str, use_ocr: bool = False) -> Dict[str, Any]:
-        """Process file using LlamaParse SDK"""
+    async def process(self, context: Context) -> Context:
+        """Process invoice file using LlamaParse"""
         try:
-            logger.info(f"Processing file with {'OCR ' if use_ocr else ''}parser: {file_path}")
-            
-            # Set OCR mode
-            self.parser.use_ocr = use_ocr
+            logger.info(f"Processing invoice: {context.invoice_path}")
             
             # Process the file
-            result = await self.parser.aparse(file_path)
+            result = await self.parser.aparse(context.invoice_path)
             
-            # Get the structured data
-            structured_data = result.get_structured_data()
+            # Get job details
+            context.job_id = result.job_id
+            context.status = result.status
             
-            # Get job details from the result
-            job_id = result.job_id
-            status = result.status
+            # Get all result formats
+            context.structured_data = result.get_structured_data()
+            context.markdown_docs = result.get_markdown_documents(split_by_page=True)
+            context.text_docs = result.get_text_documents(split_by_page=False)
             
-            logger.info(f"Job {job_id} status: {status}")
-            
-            # Get additional result formats
-            markdown_docs = result.get_markdown_documents(split_by_page=True)
-            text_docs = result.get_text_documents(split_by_page=False)
-            
-            return {
-                'job_id': job_id,
-                'status': status,
-                'structured_data': structured_data,
-                'markdown_docs': markdown_docs,
-                'text_docs': text_docs
-            }
+            logger.info(f"Successfully processed with job ID: {context.job_id}")
+            return context
             
         except LlamaCloudError as e:
             logger.error(f"LlamaCloud error: {str(e)}")
-            raise LlamaParseError(f"LlamaParse error: {str(e)}") from e
+            raise
         except Exception as e:
-            logger.error(f"Error processing file: {str(e)}", exc_info=True)
-            raise LlamaParseError(f"Error processing file: {str(e)}") from e
-
-    async def process(self, context: Context) -> Context:
-        """Run LlamaParse on the supplied invoice file and load structured JSON."""
-        if not os.path.exists(context.invoice_path):
-            raise FileNotFoundError(f"Invoice file not found: {context.invoice_path}")
-
-        try:
-            # Try standard parsing first
-            logger.info(f"Starting processing for: {context.invoice_path}")
-            result = await self._process_with_parser(context.invoice_path, use_ocr=False)
-            
-            # If standard parsing fails, try with OCR
-            if result is None:
-                logger.info("Standard parsing failed, trying with OCR...")
-                result = await self._process_with_parser(context.invoice_path, use_ocr=True)
-                
-                if result is None:
-                    raise LlamaParseError("Failed to extract data using both standard and OCR parsers")
-            
-            # Store job details and results in context
-            context.job_id = result.get('job_id')
-            context.job_status = result.get('status')
-            context.structured_data = result.get('structured_data')
-            context.markdown_docs = result.get('markdown_docs')
-            context.text_docs = result.get('text_docs')
-            
-            logger.info(f"Successfully processed document with job ID: {context.job_id}")
-            return context
-            
-        except Exception as e:
-            logger.error(f"Failed to process document: {str(e)}", exc_info=True)
-            raise LlamaParseError(f"Failed to process document: {str(e)}") from e
+            logger.error(f"Error processing invoice: {str(e)}", exc_info=True)
+            raise
 
     async def _wait_for_job_completion(self, job_id: str) -> None:
         """Wait for the job to complete and get the final status"""
