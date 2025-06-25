@@ -5,91 +5,356 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Llama OCR – Invoice Processor</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+  <style>
+    .output-container {
+      position: relative;
+      border: 1px solid #dee2e6;
+      border-radius: 0.375rem;
+      background-color: #f8f9fa;
+    }
+    .output-toolbar {
+      background-color: #e9ecef;
+      border-bottom: 1px solid #dee2e6;
+      padding: 0.5rem;
+      border-radius: 0.375rem 0.375rem 0 0;
+    }
+    .output-content {
+      padding: 1rem;
+      max-height: 60vh;
+      overflow-y: auto;
+    }
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .copy-btn {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      opacity: 0.7;
+      transition: opacity 0.2s;
+    }
+    .copy-btn:hover {
+      opacity: 1;
+    }
+  </style>
 </head>
 <body class="bg-light">
   <div class="container py-5">
-    <h2 class="mb-4 text-center">Llama OCR – Invoice Processor</h2>
-
-    <!-- Upload Card -->
-    <div class="card shadow-sm">
-      <div class="card-body">
-        <form id="uploadForm">
-          <div class="mb-3">
-            <label for="invoiceFile" class="form-label fw-bold">Select Invoice (PDF / JPG / PNG)</label>
-            <input class="form-control" type="file" id="invoiceFile" required />
-          </div>
-          <button class="btn btn-primary" type="submit">Process Invoice</button>
-        </form>
-        <div id="spinner" class="mt-3 d-none text-center">
-          <div class="spinner-border text-primary" role="status"></div>
+    <div class="row justify-content-center">
+      <div class="col-lg-10">
+        <div class="text-center mb-4">
+          <h2 class="mb-2">Llama OCR – Invoice Processor</h2>
+          <p class="text-muted">Upload and extract data from invoices with AI-powered OCR</p>
         </div>
-        <div id="log" class="mt-4 border rounded p-2" style="font-size:0.9rem; max-height:200px; overflow-y:auto;"></div>
-        <div id="result" class="mt-3"></div>
+
+        <!-- Upload Card -->
+        <div class="card shadow-sm mb-4">
+          <div class="card-body">
+            <form id="uploadForm">
+              <div class="mb-3">
+                <label for="invoiceFile" class="form-label fw-bold">Select Invoice</label>
+                <input class="form-control" type="file" id="invoiceFile" accept=".pdf,.jpg,.jpeg,.png" required />
+                <div class="form-text">Supports PDF, JPG, and PNG files</div>
+              </div>
+              <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                <button class="btn btn-primary" type="submit">
+                  <i class="bi bi-upload me-2"></i>Process Invoice
+                </button>
+              </div>
+            </form>
+            
+            <div id="spinner" class="mt-4 d-none text-center">
+              <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+              </div>
+              <p class="mt-2 mb-0 text-muted">Processing your invoice. This may take a moment...</p>
+            </div>
+            
+            <div id="log" class="mt-4 border rounded p-3" style="font-size:0.9rem; max-height:150px; overflow-y:auto; background-color: #f8f9fa;">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <small class="fw-bold text-uppercase text-muted">Activity Log</small>
+                <button id="clearLogBtn" class="btn btn-sm btn-outline-secondary">Clear</button>
+              </div>
+              <div id="logContent"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="resultSection" class="d-none">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h4 class="mb-0">Extracted Data</h4>
+            <div class="d-flex gap-2">
+              <div class="btn-group">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                  <i class="bi bi-eye me-1"></i> View
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                  <li><a class="dropdown-item view-format" href="#" data-format="json">JSON</a></li>
+                  <li><a class="dropdown-item view-format" href="#" data-format="markdown">Markdown</a></li>
+                  <li><a class="dropdown-item view-format" href="#" data-format="text">Plain Text</a></li>
+                </ul>
+              </div>
+              <div class="btn-group">
+                <button class="btn btn-sm btn-outline-primary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                  <i class="bi bi-download me-1"></i> Download
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                  <li><a class="dropdown-item download-format" href="#" data-format="pdf">PDF</a></li>
+                  <li><a class="dropdown-item download-format" href="#" data-format="xlsx">Excel (XLSX)</a></li>
+                  <li><a class="dropdown-item download-format" href="#" data-format="json">JSON</a></li>
+                  <li><a class="dropdown-item download-format" href="#" data-format="markdown">Markdown</a></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+          
+          <div class="output-container">
+            <div class="output-toolbar d-flex justify-content-between align-items-center">
+              <span id="currentFormat" class="badge bg-secondary">JSON</span>
+              <button id="copyBtn" class="btn btn-sm btn-outline-secondary copy-btn" title="Copy to clipboard">
+                <i class="bi bi-clipboard"></i>
+              </button>
+            </div>
+            <div id="outputContent" class="output-content">
+              <pre id="jsonViewer" class="d-none"></pre>
+              <div id="markdownViewer" class="d-none"></div>
+              <pre id="textViewer" class="d-none"></pre>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 
+  <!-- Bootstrap JS Bundle with Popper -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <!-- Marked.js for Markdown rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  
   <script>
-    // Point directly to the Render backend
+    // Point to your backend
     const apiUrl = "https://cole-ocr-llama.onrender.com";
-
+    
+    // DOM elements
     const form = document.getElementById("uploadForm");
     const spinner = document.getElementById("spinner");
-    const resultEl = document.getElementById("result");
-    const logEl = document.getElementById("log");
+    const resultSection = document.getElementById("resultSection");
+    const logContent = document.getElementById("logContent");
+    const clearLogBtn = document.getElementById("clearLogBtn");
+    const copyBtn = document.getElementById("copyBtn");
     
-    function addLog(msg, type="info"){
-      const div=document.createElement('div');
-      div.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;
-      div.className=`text-${type==='error'?'danger':type==='success'?'success':'secondary'}`;
-      logEl.appendChild(div);
-      logEl.scrollTop=logEl.scrollHeight;
+    // Current data and state
+    let currentData = null;
+    let currentFormat = 'json';
+    
+    // Initialize the app
+    document.addEventListener('DOMContentLoaded', () => {
+      // Clear log button
+      clearLogBtn?.addEventListener('click', (e) => {
+        e.preventDefault();
+        logContent.innerHTML = '';
+      });
+      
+      // Copy to clipboard
+      copyBtn?.addEventListener('click', copyToClipboard);
+      
+      // Format selection
+      document.querySelectorAll('.view-format').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          const format = e.target.getAttribute('data-format');
+          setViewFormat(format);
+        });
+      });
+      
+      // Download handlers
+      document.querySelectorAll('.download-format').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          const format = e.target.getAttribute('data-format');
+          downloadFormat(format);
+        });
+      });
+    });
+    
+    // Logging function
+    function addLog(msg, type = "info") {
+      const logEntry = document.createElement('div');
+      logEntry.className = `d-flex align-items-start mb-1 ${type === 'error' ? 'text-danger' : type === 'success' ? 'text-success' : 'text-muted'}`;
+      
+      let icon = 'info-circle';
+      if (type === 'error') icon = 'exclamation-triangle';
+      if (type === 'success') icon = 'check-circle';
+      
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString();
+      
+      logEntry.innerHTML = `
+        <i class="bi bi-${icon} me-2 mt-1"></i>
+        <div>
+          <span class="text-muted small">${timeStr}</span>
+          <div>${msg}</div>
+        </div>
+      `;
+      
+      logContent?.appendChild(logEntry);
+      logContent?.parentElement?.scrollTo(0, logContent.scrollHeight);
     }
-
+    
+    // Set the current view format
+    function setViewFormat(format) {
+      if (!currentData) return;
+      
+      currentFormat = format;
+      document.getElementById('currentFormat').textContent = format.toUpperCase();
+      
+      // Hide all viewers
+      document.querySelectorAll('#outputContent > *').forEach(el => el.classList.add('d-none'));
+      
+      // Show selected viewer
+      const viewer = document.getElementById(`${format}Viewer`);
+      if (viewer) {
+        viewer.classList.remove('d-none');
+        
+        // Update content if needed
+        if (format === 'markdown') {
+          viewer.innerHTML = marked.parse(currentData[format] || '');
+        } else if (format === 'text') {
+          viewer.textContent = currentData[format] || '';
+        } else if (format === 'json') {
+          viewer.textContent = JSON.stringify(currentData.json || currentData, null, 2);
+        }
+      }
+    }
+    
+    // Download file in specified format
+    function downloadFormat(format) {
+      if (!currentData || !currentData[format]) {
+        addLog(`No ${format.toUpperCase()} data available to download`, 'error');
+        return;
+      }
+      
+      try {
+        let content = currentData[format];
+        let mimeType = 'text/plain';
+        let ext = 'txt';
+        
+        if (format === 'json') {
+          content = JSON.stringify(currentData.json || currentData, null, 2);
+          mimeType = 'application/json';
+          ext = 'json';
+        } else if (format === 'pdf') {
+          mimeType = 'application/pdf';
+          ext = 'pdf';
+        } else if (format === 'xlsx') {
+          mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+          ext = 'xlsx';
+        } else if (format === 'markdown') {
+          mimeType = 'text/markdown';
+          ext = 'md';
+        }
+        
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `invoice_${new Date().toISOString().slice(0, 10)}.${ext}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        addLog(`Downloaded ${format.toUpperCase()} file`, 'success');
+      } catch (err) {
+        console.error('Download error:', err);
+        addLog(`Failed to download ${format.toUpperCase()}: ${err.message}`, 'error');
+      }
+    }
+    
+    // Copy content to clipboard
+    async function copyToClipboard() {
+      if (!currentData) return;
+      
+      try {
+        let content = '';
+        if (currentFormat === 'json') {
+          content = JSON.stringify(currentData.json || currentData, null, 2);
+        } else {
+          content = currentData[currentFormat] || '';
+        }
+        
+        await navigator.clipboard.writeText(content);
+        
+        // Show feedback
+        const icon = copyBtn.querySelector('i');
+        const originalIcon = icon.className;
+        icon.className = 'bi bi-check2';
+        copyBtn.classList.add('text-success');
+        
+        setTimeout(() => {
+          icon.className = originalIcon;
+          copyBtn.classList.remove('text-success');
+        }, 2000);
+        
+      } catch (err) {
+        console.error('Copy failed:', err);
+        addLog('Failed to copy to clipboard', 'error');
+      }
+    }
+    
+    // Form submission handler
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
-      resultEl.innerHTML = "";
-
+      
       const fileInput = document.getElementById("invoiceFile");
       if (!fileInput.files.length) return;
-
+      
       const file = fileInput.files[0];
       const formData = new FormData();
       formData.append("file", file);
-
+      
+      // Reset UI
+      resultSection?.classList.add('d-none');
       spinner.classList.remove("d-none");
-      addLog("Uploading and processing invoice...");
-
+      addLog(`Processing ${file.name}...`);
+      
       try {
         const response = await fetch(`${apiUrl}/process-invoice/`, {
           method: "POST",
           body: formData,
         });
-
-        const data = await response.json();
-        spinner.classList.add("d-none");
-
-        if (!response.ok) {
-          resultEl.innerHTML = `<div class="alert alert-danger">${data.detail || "Error processing invoice."}</div>`;
-          return;
-        }
-
         
-        resultEl.innerHTML = `
-          <h5 class="mt-3">Extracted Data</h5>
-          <pre class="bg-light p-3 border rounded overflow-auto" style="max-height:400px">${JSON.stringify(data.data, null, 2)}</pre>
-        `;
-        addLog('Extraction complete','success');
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.detail || "Error processing invoice");
+        }
+        
+        // Store the full response
+        currentData = data.data || data;
+        
+        // Initialize viewers
+        document.getElementById('jsonViewer').textContent = JSON.stringify(currentData.json || currentData, null, 2);
+        document.getElementById('markdownViewer').innerHTML = marked.parse(currentData.markdown || '');
+        document.getElementById('textViewer').textContent = currentData.text || '';
+        
+        // Show the result section and set default view
+        resultSection?.classList.remove('d-none');
+        setViewFormat('json');
+        
+        addLog('Invoice processed successfully!', 'success');
+        
       } catch (err) {
+        console.error('Processing error:', err);
+        addLog(err.message, 'error');
+      } finally {
         spinner.classList.add("d-none");
-        resultEl.innerHTML = `<div class="alert alert-danger">${err.message}</div>`;
-        addLog(err.message,'error');
       }
     });
-
-
-
-
   </script>
 </body>
 </html>
