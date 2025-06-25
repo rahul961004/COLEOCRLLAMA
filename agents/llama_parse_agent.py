@@ -32,7 +32,8 @@ class LlamaParseAgent(BaseAgent):
             result_type=result_type,
             premium_mode=True,
             num_workers=1,  # Single file processing
-            verbose=True
+            verbose=True,
+            language="en"  # Set language explicitly
         )
 
     async def _process_with_parser(self, file_path: str, use_ocr: bool = False) -> Dict[str, Any]:
@@ -44,7 +45,7 @@ class LlamaParseAgent(BaseAgent):
             self.parser.use_ocr = use_ocr
             
             # Process the file
-            result = await self.parser.parse(file_path)
+            result = await self.parser.aparse(file_path)
             
             # Get the structured data
             structured_data = result.get_structured_data()
@@ -54,10 +55,17 @@ class LlamaParseAgent(BaseAgent):
             status = result.status
             
             logger.info(f"Job {job_id} status: {status}")
+            
+            # Get additional result formats
+            markdown_docs = result.get_markdown_documents(split_by_page=True)
+            text_docs = result.get_text_documents(split_by_page=False)
+            
             return {
                 'job_id': job_id,
                 'status': status,
-                'data': structured_data
+                'structured_data': structured_data,
+                'markdown_docs': markdown_docs,
+                'text_docs': text_docs
             }
             
         except LlamaCloudError as e:
@@ -88,8 +96,9 @@ class LlamaParseAgent(BaseAgent):
             # Store job details and results in context
             context.job_id = result.get('job_id')
             context.job_status = result.get('status')
-            context.structured_data = result.get('data')
-            context.extracted_text = json.dumps(result.get('data'), indent=2) if isinstance(result.get('data'), dict) else str(result.get('data'))
+            context.structured_data = result.get('structured_data')
+            context.markdown_docs = result.get('markdown_docs')
+            context.text_docs = result.get('text_docs')
             
             logger.info(f"Successfully processed document with job ID: {context.job_id}")
             return context
