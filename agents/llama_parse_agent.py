@@ -1,12 +1,21 @@
 import os
 import json
 import asyncio
-from typing import Dict, Any
+import logging
+import base64
+from typing import Dict, Any, Optional
 from pathlib import Path
-
-from llama_cloud_services import LlamaParse
+import aiohttp
 
 from .base_agent import BaseAgent, Context
+
+# Set up logger
+logger = logging.getLogger(__name__)
+
+
+class LlamaParseError(Exception):
+    """Custom exception for LlamaParse related errors"""
+    pass
 
 
 class LlamaParseAgent(BaseAgent):
@@ -14,57 +23,113 @@ class LlamaParseAgent(BaseAgent):
 
     def __init__(
         self,
-
         result_type: str = "json",
     ) -> None:
         super().__init__("LlamaParseAgent")
 
-        self.llama_api_key: str | None = os.getenv("LLAMA_CLOUD_API_KEY")
+        self.llama_api_key = os.getenv("LLAMA_CLOUD_API_KEY")
         if not self.llama_api_key:
             raise ValueError("LLAMA_CLOUD_API_KEY must be set in environment variables")
 
-        # LlamaParse requires an LVM model API key (e.g., OpenAI key). We exclusively use
-        # OPENAI_API_KEY to avoid confusion with similarly-named variables.
-        # Build two parser instances running the Premium preset.
-        # 1. Standard parse (fast path)
-        self.parser = LlamaParse(
-            api_key=self.llama_api_key,
-            result_type=result_type,
-            premium_mode=True,
-        )
-        # 2. Fallback with OCR for image-only PDFs
-        self.parser_ocr = LlamaParse(
-            api_key=self.llama_api_key,
-            result_type=result_type,
-            premium_mode=True,
-            ocr=True,
-        )
+        self.result_type = result_type
+        self.base_url = "https://api.cloud.llamaindex.ai/api/parsing"
+        self.headers = {
+            "Authorization": f"Bearer {self.llama_api_key}",
+            "Content-Type": "application/json"
+        }
+
+    async def _read_file(self, file_path: str) -> str:
+        """Read file and return base64 encoded content"""
+        with open(file_path, 'rb') as f:
+            file_content = f.read()
+        return base64.b64encode(file_content).decode('utf-8')
+
+    async def _call_llama_parse_api(self, file_path: str, use_ocr: bool = False) -> Dict[str, Any]:
+        """Call LlamaParse API with the given file"""
+        try:
+            # Read and encode file
+            file_content = await self._read_file(file_path)
+            file_name = os.path.basename(file_path)
+            
+            # Prepare request payload
+            payload = {
+                "file": file_content,
+                "file_name": file_name,
+                "result_type": self.result_type,
+                "use_ocr": use_ocr
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.base_url}/parse",
+                    headers=self.headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=300)  # 5 minute timeout
+                ) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(f"LlamaParse API error: {response.status} - {error_text}")
+                        raise LlamaParseError(f"API Error {response.status}: {error_text}")
+                    
+                    return await response.json()
+                    
+        except asyncio.TimeoutError:
+            error_msg = "Request to LlamaParse API timed out"
+            logger.error(error_msg)
+            raise LlamaParseError(error_msg)
+        except aiohttp.ClientError as e:
+            logger.error(f"HTTP error calling LlamaParse API: {str(e)}")
+            raise LlamaParseError(f"Failed to connect to LlamaParse API: {str(e)}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to decode LlamaParse API response: {str(e)}")
+            raise LlamaParseError("Invalid response from LlamaParse API")
+        except Exception as e:
+            logger.error(f"Unexpected error in _call_llama_parse_api: {str(e)}", exc_info=True)
+            raise LlamaParseError(f"Unexpected error: {str(e)}")
+
+    async def _process_with_parser(self, file_path: str, use_ocr: bool = False) -> Optional[Dict[str, Any]]:
+        """Helper method to process file with optional OCR"""
+        try:
+            logger.info(f"Processing file with {'OCR ' if use_ocr else ''}parser: {file_path}")
+            
+            # Call the API
+            result = await self._call_llama_parse_api(file_path, use_ocr=use_ocr)
+            
+            if not result or not result.get('data'):
+                logger.warning(f"No content returned from {'OCR ' if use_ocr else ''}parser")
+                return None
+                
+            return result['data']
+            
+        except Exception as e:
+            logger.error(f"Error in {'OCR ' if use_ocr else ''}parser: {str(e)}", exc_info=True)
+            raise
 
     async def process(self, context: Context) -> Context:
         """Run LlamaParse on the supplied invoice file and load structured JSON."""
-
         if not os.path.exists(context.invoice_path):
             raise FileNotFoundError(f"Invoice file not found: {context.invoice_path}")
 
-        # Run blocking I/O in a thread so FastAPI event loop isn’t blocked.
-        docs = await asyncio.to_thread(self.parser.load_data, context.invoice_path)
-        # If no docs or empty payload, retry with OCR
-        if not docs or not docs[0].text.strip():
-            docs = await asyncio.to_thread(self.parser_ocr.load_data, context.invoice_path)
-            if not docs or not docs[0].text.strip():
-                raise ValueError("LlamaParse returned no data even after OCR retry")
-
-        raw_payload: str | Dict[str, Any] = docs[0].text
         try:
-            # Ensure dict
-            structured: Dict[str, Any] = (
-                raw_payload
-                if isinstance(raw_payload, dict)
-                else json.loads(raw_payload)
-            )
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Failed to decode JSON from LlamaParse: {exc}") from exc
-
-        context.structured_data = structured
-        context.extracted_text = json.dumps(structured, indent=2)
-        return context
+            # Try standard parsing first
+            logger.info(f"Starting processing for: {context.invoice_path}")
+            result = await self._process_with_parser(context.invoice_path, use_ocr=False)
+            
+            # If standard parsing fails, try with OCR
+            if result is None:
+                logger.info("Standard parsing failed, trying with OCR...")
+                result = await self._process_with_parser(context.invoice_path, use_ocr=True)
+                
+                if result is None:
+                    raise LlamaParseError("Failed to extract data using both standard and OCR parsers")
+            
+            # Store results in context
+            context.structured_data = result
+            context.extracted_text = json.dumps(result, indent=2) if isinstance(result, dict) else str(result)
+            
+            logger.info("Successfully processed document")
+            return context
+            
+        except Exception as e:
+            logger.error(f"Failed to process document: {str(e)}", exc_info=True)
+            raise LlamaParseError(f"Failed to process document: {str(e)}") from e
