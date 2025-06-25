@@ -1,6 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+
 from pathlib import Path
 import shutil
 import os
@@ -31,9 +31,7 @@ app.add_middleware(
 
 # Create necessary directories
 UPLOAD_DIR = "uploads"
-OUTPUT_DIR = "output"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Initialize workflow
 workflow = InvoiceProcessingWorkflow()
@@ -47,15 +45,15 @@ def get_unique_filename(directory: str, filename: str) -> str:
 
 @app.post("/process-invoice/")
 async def process_invoice(
-    request: Request,
+    
     file: UploadFile = File(..., description="The invoice file to process (PDF, JPG, PNG)"),
-    output_excel: Optional[str] = "invoices.xlsx"
+    
 ):
     """
     Process an uploaded invoice file using LlamaExtract.
     
     This endpoint accepts an invoice file, processes it using LlamaExtract for OCR and data extraction,
-    and saves the results to an Excel file.
+    and saves the results.
     """
     # Validate file type
     allowed_extensions = {'.pdf', '.jpg', '.jpeg', '.png'}
@@ -72,11 +70,8 @@ async def process_invoice(
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
-        # Set output path
-        output_path = os.path.join(OUTPUT_DIR, output_excel)
-        
         # Process the invoice
-        result = await workflow.process_invoice(file_path, output_path)
+        result = await workflow.process_invoice(file_path)
         
         # Clean up the uploaded file
         try:
@@ -87,8 +82,7 @@ async def process_invoice(
         return {
             "status": "success",
             "message": "Invoice processed successfully",
-            "data": result.get("extracted_data", {}),
-            "excel_file": str(request.base_url) + f"download/{output_excel}"
+            "data": result.get("extracted_data", {})
         }
         
     except Exception as e:
@@ -106,7 +100,7 @@ async def process_invoice(
             detail=error_msg
         )
 
-@app.get("/download/{filename}")
+# Removed download endpoint
 async def download_file(filename: str):
     """Download a processed file"""
     file_path = os.path.join(OUTPUT_DIR, filename)
@@ -117,8 +111,8 @@ async def download_file(filename: str):
         )
     return FileResponse(
         file_path,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=filename
+        
+        
     )
 
 @app.get("/health")

@@ -6,7 +6,6 @@ from dataclasses import dataclass
 class Context:
     """Shared context for workflow state management"""
     invoice_path: str
-    excel_sheet_path: str
     extracted_text: Optional[str] = None
     structured_data: Optional[Dict[str, Any]] = None
     validation_feedback: Optional[str] = None
