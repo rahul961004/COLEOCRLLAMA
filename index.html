@@ -107,74 +107,61 @@
 
         document.getElementById('uploadForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const form = e.target;
-            const fileInput = form.querySelector('#invoiceFile');
-            const file = fileInput.files[0];
-
-            if (!file) {
-                alert('Please select a file first');
+            
+            const fileInput = document.getElementById('invoiceFile');
+            const spinner = document.getElementById('spinner');
+            const processBtn = document.getElementById('processBtn');
+            
+            if (!fileInput.files.length) {
+                logToConsole('Please select a file first', 'error');
                 return;
             }
-
-            const spinner = document.getElementById('spinner');
-            spinner.classList.remove('d-none');
+            
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('file', file, file.name);
+            
+            // Show loading state
+            logToConsole(`Uploading ${file.name}...`);
+            if (processBtn) {
+                processBtn.disabled = true;
+                processBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Processing...';
+            }
+            if (spinner) spinner.classList.remove('d-none');
             
             try {
-                const formData = new FormData();
-                formData.append('file', file);
-
-                const options = {
+                // Call the Netlify function
+                const response = await fetch('/.netlify/functions/process-invoice', {
                     method: 'POST',
                     body: formData
-                };
-
-                // Show loading state
-                logToConsole('Uploading and processing invoice...');
-                const processBtn = document.getElementById('processBtn');
-                if (processBtn) {
-                    processBtn.disabled = true;
-                    processBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Processing...';
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.message || `Server returned ${response.status}`);
                 }
                 
-                try {
-                    // Call the Netlify function
-                    const response = await fetch('/.netlify/functions/process-invoice', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (!response.ok) {
-                        throw new Error(data.message || 'Failed to process invoice');
-                    }
-                    
-                    logToConsole(`Status: ${data.status} — ${data.message}`);
-                    if (data.status === 'warning') {
-                        logToConsole(`Warning: ${data.message}`, 'warning');
-                    }
-                    
-                    // Update UI with results
-                    currentData = data.data;
-                    renderData();
-                    
-                    return data;
-                } catch (error) {
-                    logToConsole(`Error: ${error.message}`, 'error');
-                    showAlert('danger', error.message);
-                    throw error;
-                } finally {
-                    // Reset button state
-                    if (processBtn) {
-                        processBtn.disabled = false;
-                        processBtn.innerHTML = 'Process Invoice';
-                    }
-                }
+                logToConsole('Invoice processed successfully!', 'success');
+                
+                // Update UI with results
+                currentData = data.data || data;
                 renderData();
+                
+                return data;
+                
             } catch (error) {
+                console.error('Error:', error);
                 logToConsole(`Error: ${error.message}`, 'error');
+                showAlert('danger', error.message);
+                throw error;
             } finally {
-                spinner.classList.add('d-none');
+                // Reset button and loading state
+                if (processBtn) {
+                    processBtn.disabled = false;
+                    processBtn.innerHTML = 'Process Invoice';
+                }
+                if (spinner) spinner.classList.add('d-none');
                 fileInput.value = '';
             }
         });
