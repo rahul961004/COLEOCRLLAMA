@@ -1,72 +1,43 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, status, Request
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-
+from typing import Optional
+from workflow import InvoiceProcessingWorkflow
+import uuid
+from fastapi.responses import FileResponse
 from pathlib import Path
 import shutil
 import os
-import uuid
-from typing import Optional, List, Dict, Any
-import asyncio
-import json
-from dotenv import load_dotenv
-from workflow import InvoiceProcessingWorkflow
 
-# Load environment variables
-load_dotenv()
+# Only load .env locally
+if os.getenv("ENV", "development") == "development":
+    from dotenv import load_dotenv
+    load_dotenv()
 
-# Validate required environment variables
-if not os.getenv("LLAMA_CLOUD_API_KEY"):
-    raise ValueError("LLAMA_CLOUD_API_KEY environment variable is required")
+app = FastAPI()
 
-app = FastAPI(title="Invoice Processing API")
-
-# Configure CORS
+# Restrict CORS in production by setting allowed origins in environment
+origins = os.getenv("CORS_ALLOW_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Create necessary directories
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+UPLOAD_DIR = Path("uploads")
+DOWNLOAD_DIR = Path("output")
+UPLOAD_DIR.mkdir(exist_ok=True)
+DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-# Initialize workflow
-workflow = InvoiceProcessingWorkflow()
-
-# Helper function to get a unique filename
-def get_unique_filename(directory: str, filename: str) -> str:
-    """Generate a unique filename in the specified directory"""
-    ext = Path(filename).suffix
-    unique_id = str(uuid.uuid4())[:8]
-    return os.path.join(directory, f"{Path(filename).stem}_{unique_id}{ext}")
-
+# Main processing endpoint
 @app.post("/process-invoice/")
-async def process_invoice(
-    
-    file: UploadFile = File(..., description="The invoice file to process (PDF, JPG, PNG)"),
-    
-):
-    """
-    Process an uploaded invoice file using LlamaExtract.
-    
-    This endpoint accepts an invoice file, processes it using LlamaExtract for OCR and data extraction,
-    and saves the results.
-    """
-    # Validate file type
-    allowed_extensions = {'.pdf', '.jpg', '.jpeg', '.png'}
-    file_ext = Path(file.filename).suffix.lower()
-    if file_ext not in allowed_extensions:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File type not supported. Allowed types: {', '.join(allowed_extensions)}"
-        )
-    
+async def process_invoice(file: UploadFile = File(...)):
     try:
-        # Save the uploaded file with a unique name
-        file_path = get_unique_filename(UPLOAD_DIR, file.filename)
+        # Save upload
+        file_path = UPLOAD_DIR / f"{uuid.uuid4()}_{file.filename}"
+        with open(file_path, "wb") as f:
+            f.write(await file.read())
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         

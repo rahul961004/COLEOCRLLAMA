@@ -2,47 +2,45 @@ import logging
 import os
 from typing import Dict, Any, Optional
 from pathlib import Path
-from agents import LlamaParseAgent, DataValidationAgent, Context
+from agents.base_agent import Context
+from agents.llama_parse_agent import LlamaParseAgent
+from agents.excel_writer_agent import ExcelWriterAgent
 
 # Set up logger
 logger = logging.getLogger(__name__)
 
 class InvoiceProcessingWorkflow:
-    """Orchestrates the invoice processing workflow using LlamaParse"""
-    
-    def __init__(self):
-        # Load environment variables
-        # Initialize agents
-        self.extract_agent = LlamaParseAgent()
-        self.validation_agent = DataValidationAgent()
+    """Workflow orchestrator for invoice processing."""
 
-    async def process_invoice(self, invoice_path: str) -> Dict[str, Any]:
-        """Process a single invoice through the workflow"""
-        logger.info(f"Starting invoice processing for: {invoice_path}")
+    def __init__(self):
+        """Initialize the workflow with required agents."""
+        self.llama_parse_agent = LlamaParseAgent()
+        self.excel_writer_agent = ExcelWriterAgent()
+
+    async def process_invoice(self, file_path: str, output_dir: Optional[str] = None):
+        """Process an invoice file through the workflow."""
+        logger.info(f"Starting invoice processing for: {file_path}")
         
-        if not os.path.exists(invoice_path):
-            error_msg = f"File not found: {invoice_path}"
+        if not os.path.exists(file_path):
+            error_msg = f"File not found: {file_path}"
             logger.error(error_msg)
             return {
                 "status": "error",
-                "invoice_path": invoice_path,
+                "invoice_path": file_path,
                 "error": error_msg,
                 "details": {"file_exists": False}
             }
         
-        # Initialize context
-        context = Context(invoice_path=invoice_path)
-        
         try:
-            # 1. Extract data using LlamaParse
+            # Initialize context
+            context = Context(invoice_path=file_path)
+
+            # Step 1: Parse invoice using LlamaParse
             logger.info("Starting data extraction...")
-            context = await self.extract_agent.process(context)
+            context = await self.llama_parse_agent.process(context)
             logger.info("Data extraction completed successfully")
-            
-            # 2. Validate the extracted data
-            logger.info("Validating extracted data...")
-            is_valid, context = await self.validation_agent.process(context)
-            logger.info(f"Validation {'succeeded' if is_valid else 'failed'}")
+
+            # Prepare result
             
             # Format the response to match frontend expectations
             result = {
