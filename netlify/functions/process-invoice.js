@@ -87,254 +87,194 @@ const parseMultipartFormData = (event) => {
 
 // Process the invoice using LlamaCloud API
 exports.handler = async (event, context) => {
-  console.log('Received request:', {
-    httpMethod: event.httpMethod,
-    path: event.path,
-    headers: event.headers,
-    isBase64Encoded: event.isBase64Encoded,
-    bodyLength: event.body ? event.body.length : 0
-  });
-
-  // Set CORS headers
-  const headers = {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, Accept',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS'
-  };
-
-  // Handle OPTIONS request
-  if (event.httpMethod === 'OPTIONS') {
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({ message: 'CORS preflight request handled' })
-    };
-  }
-
   try {
-    console.log('Processing file upload...');
+    console.log('Received request:', event);
     
-    // Parse the uploaded file
-    const parsedData = parseMultipartFormData(event);
-    console.log('File parsed successfully:', {
-      fileName: parsedData.filename,
-      mimeType: parsedData.contentType,
-      size: parsedData.content.length
-    });
-
-    // Create form data for LlamaCloud API
-    const form = new FormData();
-    form.append('file', parsedData.content, {
-      filename: parsedData.filename,
-      contentType: parsedData.contentType
-    });
-    form.append('language', 'en');
-    form.append('premium_mode', 'true');
-
-    // Convert form data to buffer
-    const formBuffer = form.getBuffer();
-    const formHeaders = form.getHeaders();
-    console.log('Form headers:', formHeaders);
-
-    // Function to submit document and get job ID
-    const submitDocument = (useIp = false) => {
-      return new Promise((resolve, reject) => {
-        const apiKey = process.env.LLAMA_CLOUD_API_KEY;
-        console.log('Using API key:', apiKey ? '*****' + apiKey.slice(-4) : 'NO API KEY');
-        
-        const options = {
-          hostname: useIp ? '34.107.221.82' : 'api.llamacloud.ai',
-          path: '/api/v1/parsing/job',
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Accept': 'application/json',
-            'Content-Type': formHeaders['content-type'],
-            'Content-Length': formBuffer.length,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
-            ...(useIp ? { 'Host': 'api.llamacloud.ai' } : {})
-          },
-          agent: new https.Agent({
-            rejectUnauthorized: false,
-            keepAlive: true,
-            maxSockets: 10,
-            timeout: 30000
-          }),
-          ciphers: 'ALL',
-          secureOptions: require('constants').SSL_OP_NO_TLSv1 | require('constants').SSL_OP_NO_TLSv1_1
-        };
-        
-        console.log('Submitting document to:', useIp ? '34.107.221.82' : 'api.llamacloud.ai');
-        console.log('Request options:', options);
-
-        const req = https.request(options, (res) => {
-          let data = [];
-          
-          console.log('Submission response status:', res.statusCode);
-          console.log('Submission response headers:', res.headers);
-          
-          if (res.statusCode !== 200) {
-            console.error(`Submission error: ${res.statusCode}`);
-            reject(new Error(`Submission error: ${res.statusCode}`));
-            return;
-          }
-          
-          res.on('data', (chunk) => {
-            data.push(chunk);
-          });
-
-          res.on('end', () => {
-            try {
-              const response = Buffer.concat(data).toString();
-              console.log('Submission response:', response);
-              const parsedResponse = JSON.parse(response);
-              resolve(parsedResponse.job_id);
-            } catch (err) {
-              console.error('Error parsing submission response:', err);
-              reject(new Error(`Failed to parse submission response: ${err.message}`));
-            }
-          });
-        });
-
-        req.on('error', (err) => {
-          console.error('Submission error:', err);
-          reject(err);
-        });
-
-        req.write(formBuffer);
-        req.end();
-      });
-    };
-
-    // Function to get job result
-    const getJobResult = (jobId, useIp = false) => {
-      return new Promise((resolve, reject) => {
-        const apiKey = process.env.LLAMA_CLOUD_API_KEY;
-        const options = {
-          hostname: useIp ? '34.107.221.82' : 'api.llamacloud.ai',
-          path: `/api/v1/parsing/job/${jobId}/result/markdown`,
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Accept': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
-            ...(useIp ? { 'Host': 'api.llamacloud.ai' } : {})
-          },
-          agent: new https.Agent({
-            rejectUnauthorized: false,
-            keepAlive: true,
-            maxSockets: 10,
-            timeout: 30000
-          }),
-          ciphers: 'ALL',
-          secureOptions: require('constants').SSL_OP_NO_TLSv1 | require('constants').SSL_OP_NO_TLSv1_1
-        };
-        
-        console.log('Getting job result for:', jobId);
-        console.log('Request options:', options);
-
-        const req = https.request(options, (res) => {
-          let data = [];
-          
-          console.log('Result response status:', res.statusCode);
-          console.log('Result response headers:', res.headers);
-          
-          if (res.statusCode !== 200) {
-            console.error(`Result error: ${res.statusCode}`);
-            reject(new Error(`Result error: ${res.statusCode}`));
-            return;
-          }
-          
-          res.on('data', (chunk) => {
-            data.push(chunk);
-          });
-
-          res.on('end', () => {
-            try {
-              const response = Buffer.concat(data).toString();
-              console.log('Result response:', response);
-              const parsedResponse = JSON.parse(response);
-              resolve(parsedResponse);
-            } catch (err) {
-              console.error('Error parsing result response:', err);
-              reject(new Error(`Failed to parse result response: ${err.message}`));
-            }
-          });
-        });
-
-        req.on('error', (err) => {
-          console.error('Result error:', err);
-          reject(err);
-        });
-
-        req.end();
-      });
-    };
-
-    // Try direct connection first
-    try {
-      console.log('Trying direct connection to LlamaCloud API...');
-      const jobId = await submitDocument(false);
-      const result = await getJobResult(jobId, false);
+    // Handle CORS
+    if (event.httpMethod === 'OPTIONS') {
       return {
         statusCode: 200,
-        headers,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+          'Access-Control-Allow-Credentials': true
+        },
+        body: ''
+      };
+    }
+
+    if (event.httpMethod !== 'POST') {
+      return {
+        statusCode: 405,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ message: 'Method not allowed' })
+      };
+    }
+
+    // Parse multipart form data
+    console.log('Processing file upload...');
+    console.log('Parsing request...');
+
+    const contentType = event.headers['content-type'];
+    console.log('Content-Type:', contentType);
+    console.log('Is base64 encoded:', event.isBase64Encoded);
+    console.log('Raw body length:', event.bodyLength);
+
+    // Check if it's multipart form data
+    if (!contentType || !contentType.startsWith('multipart/form-data')) {
+      throw new Error('Invalid content type');
+    }
+
+    const boundary = contentType.split('boundary=')[1];
+    console.log('Using boundary:', boundary);
+
+    // Decode base64 body if needed
+    let body = event.isBase64Encoded ? Buffer.from(event.body, 'base64') : Buffer.from(event.body);
+    console.log('Decoded body length:', body.length);
+
+    // Split parts using boundary
+    const parts = body.toString().split(`--${boundary}`);
+    console.log('Found', parts.length - 2, 'parts');
+
+    // Find the file part
+    let fileData = null;
+    for (let i = 1; i < parts.length - 1; i++) {
+      const part = parts[i].trim();
+      const headerEnd = part.indexOf('\r\n\r\n');
+      if (headerEnd === -1) continue;
+
+      const headers = part.substring(0, headerEnd);
+      const content = part.substring(headerEnd + 4);
+
+      // Check if this is the file part
+      if (headers.includes('filename="')) {
+        const filenameMatch = headers.match(/filename="([^"]+)"/);
+        const contentTypeMatch = headers.match(/Content-Type: ([^\r\n]+)/);
+
+        if (filenameMatch && contentTypeMatch) {
+          fileData = {
+            fileName: filenameMatch[1],
+            mimeType: contentTypeMatch[1],
+            content: Buffer.from(content)
+          };
+          break;
+        }
+      }
+    }
+
+    if (!fileData) {
+      throw new Error('No file data found in request');
+    }
+
+    console.log('File parsed successfully:', {
+      fileName: fileData.fileName,
+      mimeType: fileData.mimeType,
+      size: fileData.content.length
+    });
+
+    // Initialize LlamaCloud client
+    const client = new LlamaCloud({
+      apiKey: process.env.LLAMA_CLOUD_API_KEY,
+      baseUrl: 'https://api.llamacloud.ai',
+      timeout: 30000
+    });
+
+    try {
+      console.log('Processing document with LlamaCloud...');
+      
+      // Submit the document
+      const result = await client.parseDocument({
+        file: fileData.content,
+        filename: fileData.fileName,
+        outputFormat: 'markdown'
+      });
+
+      return {
+        statusCode: 200,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify({
           status: 'success',
           message: 'Invoice processed successfully',
           data: {
-            json: response,
-            markdown: response.markdown || '',
-            text: response.text || ''
+            markdown: result.markdown || '',
+            text: result.text || '',
+            metadata: result.job_metadata || {}
           }
         })
       };
-      return response.data;
     } catch (error) {
-      console.error('Direct connection failed, trying with IP address...', error.message);
+      console.error('LlamaCloud processing error:', error);
       
-      // Try with IP address if direct connection fails
-      try {
-        console.log('Trying with direct IP connection...');
-        const response = await makeRequest(true);
-        return response.data;
+      // Try with IP fallback if DNS resolution fails
+      if (error.code === 'ENOTFOUND') {
+        console.log('Trying with IP fallback...');
         
-      } catch (ipError) {
-        console.error('IP-based connection failed:', ipError.message);
-        if (ipError.response) {
-          console.error('Response status:', ipError.response.status);
-          console.error('Response data:', ipError.response.data);
+        // Update client with IP address
+        client.config.baseUrl = 'https://34.107.221.82';
+        client.config.rejectUnauthorized = false;
+
+        try {
+          const result = await client.parseDocument({
+            file: fileData.content,
+            filename: fileData.fileName,
+            outputFormat: 'markdown'
+          });
+
+          return {
+            statusCode: 200,
+            headers: {
+              'Access-Control-Allow-Origin': '*',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              status: 'success',
+              message: 'Invoice processed successfully',
+              data: {
+                markdown: result.markdown || '',
+                text: result.text || '',
+                metadata: result.job_metadata || {}
+              }
+            })
+          };
+        } catch (ipError) {
+          console.error('IP-based connection failed:', ipError);
+          return {
+            statusCode: 500,
+            headers: {
+              'Access-Control-Allow-Origin': '*',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              status: 'error',
+              message: 'Failed to connect to LlamaCloud API',
+              error: ipError.message
+            })
+          };
         }
-        throw new Error(`Failed to connect to LlamaCloud API: ${ipError.message}`);
+      } else {
+        throw error;
       }
     }
-    console.log('Processing completed successfully');
-    
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({
-        status: 'success',
-        message: 'Invoice processed successfully',
-        data: {
-          json: result,
-          markdown: result.markdown || '',
-          text: result.text || ''
-        }
-      })
-    };
-    
   } catch (error) {
     console.error('Error processing invoice:', error);
-    
     return {
       statusCode: 500,
-      headers,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json'
+      },
       body: JSON.stringify({
         status: 'error',
-        message: error.message || 'Failed to process invoice',
-        error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        message: 'Error processing invoice',
+        error: error.message,
+        stack: error.stack
       })
     };
   }
