@@ -218,10 +218,17 @@ exports.handler = async (event, context) => {
     } catch (error) {
       console.error('Direct connection failed, trying with DNS resolution workaround:', error.message);
       
-      // If direct connection fails, try with hardcoded IP
+      // If direct connection fails, try with hardcoded IP and disable SSL verification
       try {
         const ipApiUrl = 'https://34.107.221.82/v1/parse';
         console.log('Trying with direct IP connection to:', ipApiUrl);
+        
+        // Create a custom agent that doesn't verify SSL
+        const httpsAgent = new https.Agent({  
+          rejectUnauthorized: false,  // Disable SSL verification
+          keepAlive: true,
+          timeout: 30000
+        });
         
         const response = await axios.post(ipApiUrl, form, {
           headers: {
@@ -231,7 +238,9 @@ exports.handler = async (event, context) => {
           httpsAgent,
           timeout: 30000,
           maxContentLength: Infinity,
-          maxBodyLength: Infinity
+          maxBodyLength: Infinity,
+          // Disable axios's own SSL verification
+          httpsAgent: new (require('https').Agent({ rejectUnauthorized: false }))
         });
         
         console.log(`IP-based connection successful, Status: ${response.status}`);
