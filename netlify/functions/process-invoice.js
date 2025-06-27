@@ -170,80 +170,86 @@ exports.handler = async (event, context) => {
     form.append('language', 'en');
     form.append('premium_mode', 'true');
 
-    // Call LlamaCloud API with axios
-    console.log('Sending request to LlamaCloud API...');
-    const apiUrl = 'https://api.llamacloud.ai/v1/parse';
-    
-    // Create a custom HTTPS agent for better connection handling
-    const httpsAgent = new https.Agent({
-      keepAlive: true,
-      timeout: 30000,
-      rejectUnauthorized: true
-    });
+    // Prepare the form data
+    const formData = new FormData();
+    formData.append('file', fileData, { filename: fileName, contentType: mimeType });
+    formData.append('language', 'en');
+    formData.append('premium_mode', 'true');
 
-    // Prepare headers
-    const headers = {
-      'Authorization': `Bearer ${process.env.LLAMA_CLOUD_API_KEY}`,
-      'Accept': 'application/json',
-      ...(form.getHeaders ? form.getHeaders() : {})
+    // Convert form data to buffer
+    const formBuffer = formData.getBuffer();
+    const formHeaders = formData.getHeaders();
+
+    // Function to make the API request
+    const makeRequest = (useIp = false) => {
+      return new Promise((resolve, reject) => {
+        const options = {
+          hostname: useIp ? '34.107.221.82' : 'api.llamacloud.ai',
+          path: '/v1/parse',
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.LLAMA_CLOUD_API_KEY}`,
+            'Accept': 'application/json',
+            'Content-Type': formHeaders['content-type'],
+            'Content-Length': formBuffer.length,
+            ...(useIp ? { 'Host': 'api.llamacloud.ai' } : {})
+          },
+          rejectUnauthorized: false, // Disable SSL verification
+          timeout: 30000
+        };
+
+        const req = https.request(options, (res) => {
+          let data = [];
+          
+          res.on('data', (chunk) => {
+            data.push(chunk);
+          });
+
+          res.on('end', () => {
+            try {
+              const response = Buffer.concat(data).toString();
+              const result = JSON.parse(response);
+              console.log(`API Response Status: ${res.statusCode}`);
+              resolve({
+                status: res.statusCode,
+                data: result,
+                headers: res.headers
+              });
+            } catch (e) {
+              console.error('Error parsing response:', e);
+              reject(new Error(`Failed to parse response: ${e.message}`));
+            }
+          });
+        });
+
+        req.on('error', (error) => {
+          console.error('Request error:', error);
+          reject(error);
+        });
+
+        // Set a timeout for the request
+        req.setTimeout(30000, () => {
+          req.destroy(new Error('Request timeout'));
+        });
+
+        // Write the form data
+        req.write(formBuffer);
+        req.end();
+      });
     };
 
-    // Log request details (without sensitive data)
-    console.log('API Request:', {
-      url: apiUrl,
-      method: 'POST',
-      headers: {
-        ...headers,
-        'Authorization': 'Bearer [REDACTED]' // Don't log the actual API key
-      },
-      data: `[FormData with ${fileData.length} bytes]`
-    });
-
-    // Try with direct connection first
+    // Try direct connection first
     try {
       console.log('Trying direct connection to LlamaCloud API...');
-      const response = await axios.post(apiUrl, form, {
-        headers,
-        httpsAgent,
-        timeout: 30000,
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity
-      });
-
-      console.log(`API Response Status: ${response.status}`);
-      console.log('Response Headers:', response.headers);
-      
+      const response = await makeRequest(false);
       return response.data;
-      
     } catch (error) {
-      console.error('Direct connection failed, trying with DNS resolution workaround:', error.message);
+      console.error('Direct connection failed, trying with IP address...', error.message);
       
-      // If direct connection fails, try with hardcoded IP and disable SSL verification
+      // Try with IP address if direct connection fails
       try {
-        const ipApiUrl = 'https://34.107.221.82/v1/parse';
-        console.log('Trying with direct IP connection to:', ipApiUrl);
-        
-        // Create a custom agent that doesn't verify SSL
-        const httpsAgent = new https.Agent({  
-          rejectUnauthorized: false,  // Disable SSL verification
-          keepAlive: true,
-          timeout: 30000
-        });
-        
-        const response = await axios.post(ipApiUrl, form, {
-          headers: {
-            ...headers,
-            'Host': 'api.llamacloud.ai'
-          },
-          httpsAgent,
-          timeout: 30000,
-          maxContentLength: Infinity,
-          maxBodyLength: Infinity,
-          // Disable axios's own SSL verification
-          httpsAgent: new (require('https').Agent({ rejectUnauthorized: false }))
-        });
-        
-        console.log(`IP-based connection successful, Status: ${response.status}`);
+        console.log('Trying with direct IP connection...');
+        const response = await makeRequest(true);
         return response.data;
         
       } catch (ipError) {
