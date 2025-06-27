@@ -1,7 +1,4 @@
-import { createReadStream } from 'fs';
 import { FormData } from 'form-data';
-import { fileURLToPath } from 'url';
-import path from 'path';
 import fetch from 'node-fetch';
 
 // Process the invoice using LlamaCloud API
@@ -47,22 +44,13 @@ export const handler = async (event) => {
       };
     }
 
-    // Create temporary file path
-    const __dirname = path.dirname(fileURLToPath(import.meta.url));
-    const tempFilePath = path.join(__dirname, 'temp', 'invoice.pdf');
-
-    // Write file to disk
-    await new Promise((resolve, reject) => {
-      const writeStream = createReadStream(tempFilePath);
-      writeStream.write(event.body, 'base64', (err) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
-
-    // Create form data
+    // Parse multipart form data
+    const boundary = contentType.split('boundary=')[1];
+    const body = event.isBase64Encoded ? Buffer.from(event.body, 'base64') : Buffer.from(event.body);
+    
+    // Create form data directly from buffer
     const formData = new FormData();
-    formData.append('file', createReadStream(tempFilePath), {
+    formData.append('file', body, {
       filename: 'invoice.pdf',
       contentType: 'application/pdf'
     });
