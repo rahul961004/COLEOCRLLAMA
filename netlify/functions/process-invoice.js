@@ -1,4 +1,4 @@
-import { FormData } from 'form-data';
+import FormData from 'form-data-node';
 import fetch from 'node-fetch';
 
 // Process the invoice using LlamaCloud API
@@ -45,15 +45,19 @@ export const handler = async (event) => {
     }
 
     // Parse multipart form data
-    const boundary = contentType.split('boundary=')[1];
-    const body = event.isBase64Encoded ? Buffer.from(event.body, 'base64') : Buffer.from(event.body);
-    
-    // Create form data directly from buffer
     const formData = new FormData();
-    formData.append('file', body, {
+    
+    // Create a Buffer from the base64 encoded body
+    const fileBuffer = Buffer.from(event.body, 'base64');
+    
+    // Add the file to form data
+    formData.append('file', fileBuffer, {
       filename: 'invoice.pdf',
       contentType: 'application/pdf'
     });
+    
+    // Add result type
+    formData.append('result_type', 'markdown');
     formData.append('result_type', 'markdown');
 
     // Make API request

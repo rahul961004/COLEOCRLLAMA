@@ -10,7 +10,7 @@ NODE_OPTIONS = "--max_old_space_size=4096"
 
 [functions]
 node_bundler = "esbuild"
-external_node_modules = ["axios", "form-data", "uuid"]
+external_node_modules = []
 included_files = ["netlify/functions/*.js"]
 
 [[redirects]]
@@ -19,8 +19,8 @@ to = "/index.html"
 status = 200
 
 [[headers]]
-for = "/*"
+for = "/.netlify/functions/*"
 [headers.values]
 Access-Control-Allow-Origin = "*"
 Access-Control-Allow-Methods = "GET, POST, OPTIONS"
-Access-Control-Allow-Headers = "Content-Type"
+Access-Control-Allow-Headers = "Content-Type, Authorization"
