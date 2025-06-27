@@ -1,45 +1,26 @@
 [build]
-  publish = "."  # Publish from the root directory
-  command = "npm install --prefix netlify/functions"  # Only install function dependencies
-  functions = "netlify/functions"
-
-[functions]
-  node_bundler = "esbuild"
-  external_node_modules = ["axios", "form-data", "uuid"]
-  included_files = ["netlify/functions/*.js"]
-  # Force Node.js 18.x
-  node_bridge = true
-  # Set Node.js version for functions
-  NODE_VERSION = "18"
+publish = "."
+command = "npm install --prefix netlify/functions"
+functions = "netlify/functions"
 
 [build.environment]
-  NODE_VERSION = "18"
-  NPM_VERSION = "9"
-  NODE_OPTIONS = "--max_old_space_size=4096 --dns-result-order=ipv4first"
-  NODE_EXTRA_CA_CERTS = "/etc/ssl/certs/ca-certificates.crt"
-  NPM_FLAGS = "--prefix netlify/functions"
+NODE_VERSION = "18"
+NPM_VERSION = "9"
+NODE_OPTIONS = "--max_old_space_size=4096"
 
-[dev]
-  command = "netlify dev"
-  port = 8888
-  targetPort = 3000
+[functions]
+node_bundler = "esbuild"
+external_node_modules = ["axios", "form-data", "uuid"]
+included_files = ["netlify/functions/*.js"]
 
-# Handle CORS for API requests
+[[redirects]]
+from = "/*"
+to = "/index.html"
+status = 200
+
 [[headers]]
-  for = "/*"
-  [headers.values]
-    Access-Control-Allow-Origin = "*"
-    Access-Control-Allow-Methods = "GET, POST, OPTIONS"
-    Access-Control-Allow-Headers = "Content-Type"
-
-# Handle SPA routing
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
-
-# API redirects
-[[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/:splat"
-  status = 200
+for = "/*"
+[headers.values]
+Access-Control-Allow-Origin = "*"
+Access-Control-Allow-Methods = "GET, POST, OPTIONS"
+Access-Control-Allow-Headers = "Content-Type"
