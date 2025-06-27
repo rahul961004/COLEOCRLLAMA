@@ -103,60 +103,31 @@ exports.handler = async (event, context) => {
     'Access-Control-Allow-Methods': 'POST, OPTIONS'
   };
 
-  // Handle OPTIONS request for CORS preflight
+  // Handle OPTIONS request
   if (event.httpMethod === 'OPTIONS') {
-    console.log('Handling OPTIONS request');
     return {
       statusCode: 200,
       headers,
-      body: ''
-    };
-  }
-
-  // Only allow POST requests
-  if (event.httpMethod !== 'POST') {
-    const error = 'Method Not Allowed';
-    console.error('Error:', error);
-    return {
-      statusCode: 405,
-      headers,
-      body: JSON.stringify({ error })
+      body: JSON.stringify({ message: 'CORS preflight request handled' })
     };
   }
 
   try {
     console.log('Processing file upload...');
     
-    // Parse the multipart form data
+    // Parse the uploaded file
     const parsedData = parseMultipartFormData(event);
-    
-    if (!parsedData || !parsedData.content || !parsedData.content.length) {
-      console.error('No valid file data found in request');
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ error: 'No valid file data found in request' })
-      };
-    }
-    
-    // Extract file data with fallbacks
-    const fileData = {
-      content: parsedData.content,
-      filename: parsedData.filename || 'invoice.pdf',
-      contentType: parsedData.contentType || 'application/octet-stream'
-    };
-    
-    console.log('File parsed successfully:', { 
-      fileName: fileData.filename, 
-      mimeType: fileData.contentType, 
-      size: fileData.content.length 
+    console.log('File parsed successfully:', {
+      fileName: parsedData.filename,
+      mimeType: parsedData.contentType,
+      size: parsedData.content.length
     });
 
     // Create form data for LlamaCloud API
     const form = new FormData();
-    form.append('file', fileData.content, {
-      filename: fileData.filename,
-      contentType: fileData.contentType,
-      knownLength: fileData.content.length
+    form.append('file', parsedData.content, {
+      filename: parsedData.filename,
+      contentType: parsedData.contentType
     });
     form.append('language', 'en');
     form.append('premium_mode', 'true');
@@ -178,10 +149,13 @@ exports.handler = async (event, context) => {
             'Accept': 'application/json',
             'Content-Type': formHeaders['content-type'],
             'Content-Length': formBuffer.length,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
             ...(useIp ? { 'Host': 'api.llamacloud.ai' } : {})
           },
-          rejectUnauthorized: false, // Disable SSL verification for IP connection
-          timeout: 30000
+          rejectUnauthorized: false, // Disable SSL verification
+          timeout: 30000,
+          ciphers: 'ALL',
+          secureOptions: require('constants').SSL_OP_NO_TLSv1 | require('constants').SSL_OP_NO_TLSv1_1
         };
         
         console.log('Making request to:', useIp ? '34.107.221.82' : 'api.llamacloud.ai');
@@ -196,31 +170,30 @@ exports.handler = async (event, context) => {
           res.on('end', () => {
             try {
               const response = Buffer.concat(data).toString();
-              const result = JSON.parse(response);
-              console.log(`API Response Status: ${res.statusCode}`);
-              resolve({
-                status: res.statusCode,
-                data: result,
-                headers: res.headers
-              });
-            } catch (e) {
-              console.error('Error parsing response:', e);
-              reject(new Error(`Failed to parse response: ${e.message}`));
+              console.log('Response:', response);
+              
+              // Check if we got HTML instead of JSON
+              if (response.includes('<html>') || response.includes('<!DOCTYPE html>')) {
+                console.error('Received HTML response instead of JSON');
+                reject(new Error('Received HTML response instead of JSON'));
+                return;
+              }
+              
+              const parsedResponse = JSON.parse(response);
+              resolve(parsedResponse);
+            } catch (err) {
+              console.error('Error parsing response:', err);
+              reject(new Error(`Failed to parse response: ${err.message}`));
             }
           });
         });
 
-        req.on('error', (error) => {
-          console.error('Request error:', error);
-          reject(error);
+        req.on('error', (err) => {
+          console.error('Request error:', err);
+          reject(err);
         });
 
-        // Set a timeout for the request
-        req.setTimeout(30000, () => {
-          req.destroy(new Error('Request timeout'));
-        });
-
-        // Write the form data
+        // Write data to request body
         req.write(formBuffer);
         req.end();
       });
