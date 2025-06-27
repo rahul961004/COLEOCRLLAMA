@@ -9,6 +9,8 @@
   included_files = ["netlify/functions/*.js"]
   # Force Node.js 18.x
   node_bridge = true
+  # Set Node.js version for functions
+  NODE_VERSION = "18"
 
 [build.environment]
   NODE_VERSION = "18"
