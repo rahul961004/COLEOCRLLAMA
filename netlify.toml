@@ -1,6 +1,11 @@
 [build]
   publish = "."
-  command = ""
+  command = "cd netlify/functions && npm install"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+  external_node_modules = ["formidable"]
 
 # Handle CORS for API requests
 [[headers]]
@@ -14,4 +19,10 @@
 [[redirects]]
   from = "/*"
   to = "/index.html"
+  status = 200
+
+# API redirects
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
   status = 200

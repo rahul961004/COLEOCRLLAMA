@@ -1,0 +1,17 @@
+{
+  "name": "llama-ocr-functions",
+  "version": "1.0.0",
+  "description": "Netlify functions for Llama OCR",
+  "main": "process-invoice.js",
+  "dependencies": {
+    "formidable": "^3.5.0",
+    "fs-extra": "^11.1.1",
+    "node-fetch": "^2.6.9",
+    "path": "^0.12.7",
+    "util": "^0.12.5",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@netlify/functions": "^1.0.0"
+  }
+}

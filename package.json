@@ -1,0 +1,12 @@
+{
+  "name": "llama-ocr",
+  "version": "1.0.0",
+  "description": "Llama OCR - Invoice Processing with Netlify Functions",
+  "scripts": {
+    "build": "cd netlify/functions && npm install",
+    "dev": "netlify dev"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT"
+}

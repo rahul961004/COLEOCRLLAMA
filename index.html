@@ -128,8 +128,16 @@
                     body: formData
                 };
 
-                const response = await fetch(`${BASE_URL}/process-invoice/`, options);
+                // Call the Netlify function
+                const response = await fetch('/.netlify/functions/process-invoice', {
+                    method: 'POST',
+                    body: formData
+                });
                 const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.message || 'Failed to process invoice');
+                }
 
                 logToConsole(`Status: ${data.status} — ${data.message}`);
                 if (data.status === 'warning') {
