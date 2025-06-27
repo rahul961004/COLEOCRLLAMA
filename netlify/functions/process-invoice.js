@@ -6,113 +6,83 @@ const https = require('https');
 // Helper function to parse multipart form data
 const parseMultipartFormData = (event) => {
   console.log('Parsing request...');
-  console.log('Headers:', JSON.stringify(event.headers, null, 2));
-  console.log('Is base64 encoded:', event.isBase64Encoded);
+  const headers = event.headers || {};
+  console.log('Content-Type:', headers['content-type']);
   
   if (!event.body) {
-    throw new Error('No request body found');
+    console.error('No body in request');
+    throw new Error('No body in request');
   }
-
-  // Handle base64 encoded body
-  const body = event.isBase64Encoded 
-    ? Buffer.from(event.body, 'base64').toString('binary')
-    : event.body;
+  
+  // Get the raw body
+  const rawBody = event.isBase64Encoded 
+    ? Buffer.from(event.body, 'base64')
+    : Buffer.from(event.body);
     
-  console.log('Body length:', body.length);
+  console.log('Is base64 encoded:', event.isBase64Encoded);
+  console.log('Raw body length:', rawBody.length);
   
-  // If the body is empty or too small, throw an error
-  if (!body || body.length < 10) {
-    throw new Error('Request body is empty or too small');
-  }
-
-  // Try to find the boundary from Content-Type header
-  let boundary = null;
-  if (event.headers && event.headers['content-type']) {
-    const contentType = event.headers['content-type'];
-    const boundaryMatch = contentType.match(/boundary=([^;]+)/i);
-    if (boundaryMatch && boundaryMatch[1]) {
-      boundary = '--' + boundaryMatch[1].trim();
-      console.log('Found boundary in header:', boundary);
-    }
+  // Get boundary from content-type header
+  const contentType = headers['content-type'] || '';
+  const boundaryMatch = contentType.match(/boundary=([^;\s]+)/i);
+  
+  if (!boundaryMatch) {
+    console.error('No boundary found in content-type header');
+    throw new Error('No boundary found in content-type header');
   }
   
-  // If no boundary in header, try to find it in the body
-  if (!boundary) {
-    const firstLine = body.split('\r\n')[0];
-    if (firstLine && firstLine.startsWith('--')) {
-      boundary = firstLine.trim();
-      console.log('Found boundary in body:', boundary);
-    }
-  }
+  const boundary = '--' + boundaryMatch[1];
+  console.log('Using boundary:', boundary);
   
-  if (!boundary) {
-    console.error('No boundary found in request');
-    // If we can't find a boundary, try to process as direct file upload
-    return {
-      fileData: Buffer.from(event.isBase64Encoded ? event.body : Buffer.from(event.body).toString('base64'), 'base64'),
-      filename: `invoice-${uuidv4()}.pdf`,
-      contentType: event.headers['content-type'] || 'application/octet-stream'
-    };
-  }
-
-  // Split the body into parts using the boundary
-  const parts = body.split(boundary);
-  console.log('Found parts:', parts.length);
+  // Convert buffer to string for easier parsing
+  const bodyStr = rawBody.toString('binary');
+  const parts = bodyStr.split(boundary);
+  console.log(`Found ${parts.length} parts`);
   
-  let fileData = null;
-  let filename = `invoice-${uuidv4()}.pdf`;
-  let fileContentType = 'application/octet-stream';
-
-  for (const part of parts) {
-    if (!part || part.trim() === '' || part.trim().endsWith('--')) {
-      continue;
-    }
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i].trim();
     
-    // Extract headers and content
-    const headerEnd = part.indexOf('\r\n\r\n');
-    if (headerEnd === -1) continue;
-    
-    const headers = part.substring(0, headerEnd);
-    const content = part.substring(headerEnd + 4);
+    // Skip empty parts
+    if (!part || part === '--') continue;
     
     // Check if this part contains a file
-    if (headers.includes('filename=')) {
+    if (part.includes('filename=')) {
       // Extract filename
-      const filenameMatch = headers.match(/filename=["']?([^"'\r\n]+)/i);
-      if (filenameMatch && filenameMatch[1]) {
-        filename = filenameMatch[1].trim().replace(/[^\w\d.-]/g, '_');
-      }
+      const filenameMatch = part.match(/filename=["']?([^"'\r\n]*)/i);
+      const filename = filenameMatch ? filenameMatch[1] : 'invoice.pdf';
       
       // Extract content type
-      const contentTypeMatch = headers.match(/Content-Type:\s*([^\r\n]+)/i);
-      if (contentTypeMatch && contentTypeMatch[1]) {
-        fileContentType = contentTypeMatch[1].trim();
+      const contentTypeMatch = part.match(/Content-Type:\s*([^\r\n]+)/i);
+      const fileContentType = contentTypeMatch ? contentTypeMatch[1].trim() : 'application/octet-stream';
+      
+      // Find the start of the file content (after the headers)
+      const headerEnd = part.indexOf('\r\n\r\n');
+      if (headerEnd === -1) continue;
+      
+      // Extract the file content (everything after headers and before the next boundary)
+      let content = part.substring(headerEnd + 4);
+      
+      // Remove trailing boundary if present
+      const nextBoundaryIndex = content.indexOf('\r\n--');
+      if (nextBoundaryIndex !== -1) {
+        content = content.substring(0, nextBoundaryIndex);
       }
       
-      // Get the file content
-      fileData = Buffer.from(content, 'binary');
-      console.log(`Found file: ${filename}, type: ${fileContentType}, size: ${fileData.length} bytes`);
-      break;
+      // Convert content to buffer
+      const fileBuffer = Buffer.from(content, 'binary');
+      console.log(`Found file: ${filename}, type: ${fileContentType}, size: ${fileBuffer.length} bytes`);
+      
+      return {
+        content: fileBuffer,
+        filename: filename,
+        contentType: fileContentType
+      };
     }
   }
-
-  if (!fileData) {
-    console.error('No file data found in the request');
-    // If no file found in multipart, try to use the raw body
-    if (body.length > 0) {
-      console.log('Using raw body as file data');
-      fileData = Buffer.from(body, 'binary');
-      filename = `invoice-${uuidv4()}.${fileContentType.split('/').pop() || 'bin'}`;
-    } else {
-      throw new Error('No file data found in request');
-    }
-  }
-
-  return { 
-    fileData, 
-    filename, 
-    contentType: fileContentType 
-  };
+  
+  // If we get here, no file was found in the multipart data
+  console.error('No file found in the request');
+  throw new Error('No file found in the request');
 };
 
 // Process the invoice using LlamaCloud API
@@ -157,28 +127,44 @@ exports.handler = async (event, context) => {
   try {
     console.log('Processing file upload...');
     
-    // Parse the uploaded file
-    const { fileData, filename, contentType } = parseMultipartFormData(event);
-    console.log(`File parsed successfully: ${filename}, type: ${contentType}, size: ${fileData.length} bytes`);
+    // Parse the multipart form data
+    const parsedData = parseMultipartFormData(event);
     
+    if (!parsedData || !parsedData.content || !parsedData.content.length) {
+      console.error('No valid file data found in request');
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'No valid file data found in request' })
+      };
+    }
+    
+    // Extract file data with fallbacks
+    const fileData = {
+      content: parsedData.content,
+      filename: parsedData.filename || 'invoice.pdf',
+      contentType: parsedData.contentType || 'application/octet-stream'
+    };
+    
+    console.log('File parsed successfully:', { 
+      fileName: fileData.filename, 
+      mimeType: fileData.contentType, 
+      size: fileData.content.length 
+    });
+
     // Create form data for LlamaCloud API
     const form = new FormData();
-    form.append('file', fileData, {
-      filename,
-      contentType: contentType || 'application/octet-stream'
+    form.append('file', fileData.content, {
+      filename: fileData.filename,
+      contentType: fileData.contentType,
+      knownLength: fileData.content.length
     });
     form.append('language', 'en');
     form.append('premium_mode', 'true');
 
-    // Prepare the form data
-    const formData = new FormData();
-    formData.append('file', fileData, { filename: fileName, contentType: mimeType });
-    formData.append('language', 'en');
-    formData.append('premium_mode', 'true');
-
     // Convert form data to buffer
-    const formBuffer = formData.getBuffer();
-    const formHeaders = formData.getHeaders();
+    const formBuffer = form.getBuffer();
+    const formHeaders = form.getHeaders();
+    console.log('Form headers:', formHeaders);
 
     // Function to make the API request
     const makeRequest = (useIp = false) => {
@@ -194,9 +180,11 @@ exports.handler = async (event, context) => {
             'Content-Length': formBuffer.length,
             ...(useIp ? { 'Host': 'api.llamacloud.ai' } : {})
           },
-          rejectUnauthorized: false, // Disable SSL verification
+          rejectUnauthorized: false, // Disable SSL verification for IP connection
           timeout: 30000
         };
+        
+        console.log('Making request to:', useIp ? '34.107.221.82' : 'api.llamacloud.ai');
 
         const req = https.request(options, (res) => {
           let data = [];
