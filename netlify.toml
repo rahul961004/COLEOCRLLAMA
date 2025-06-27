@@ -1,11 +1,24 @@
 [build]
   publish = "."
-  command = "cd netlify/functions && npm install"
+  command = "npm install && cd netlify/functions && npm install"
   functions = "netlify/functions"
 
 [functions]
   node_bundler = "esbuild"
-  external_node_modules = ["formidable"]
+  external_node_modules = ["formidable", "form-data", "node-fetch"]
+  included_files = ["netlify/functions/package.json"]
+
+[[plugins]]
+  package = "@netlify/plugin-functions-install-core"
+
+[build.environment]
+  NODE_VERSION = "18"
+  NPM_FLAGS = "--prefix netlify/functions"
+
+[dev]
+  framework = "#custom"
+  command = "npm run dev"
+  port = 8888
 
 # Handle CORS for API requests
 [[headers]]

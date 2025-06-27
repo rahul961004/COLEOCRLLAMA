@@ -1,30 +1,8 @@
-const { parse } = require('path');
-const { promisify } = require('util');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
 const { v4: uuidv4 } = require('uuid');
-const FormData = require('form-data');
 const fetch = require('node-fetch');
-const fsExtra = require('fs-extra');
-
-// Create temp directory if it doesn't exist
-const tempDir = path.join(os.tmpdir(), 'llama-ocr');
-fsExtra.ensureDirSync(tempDir);
-
-// Parse form data
-const parseForm = async (event) => {
-  return new Promise((resolve, reject) => {
-    const form = new Formidable.IncomingForm();
-    form.uploadDir = tempDir;
-    form.keepExtensions = true;
-    
-    form.parse(event.rawBody, (err, fields, files) => {
-      if (err) return reject(err);
-      resolve({ fields, files });
-    });
-  });
-};
+const FormData = require('form-data');
+const fs = require('fs');
+const path = require('path');
 
 // Process the invoice using LlamaCloud API
 exports.handler = async (event, context) => {
@@ -32,43 +10,48 @@ exports.handler = async (event, context) => {
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ error: 'Method Not Allowed' }),
     };
   }
 
   try {
-    // Parse form data
-    const form = new FormData();
+    // Parse the multipart form data
     const boundary = event.headers['content-type'].split('boundary=')[1];
-    form._boundary = boundary;
+    if (!boundary) {
+      throw new Error('No boundary found in content-type header');
+    }
     
-    const fileData = Buffer.from(event.body, 'base64');
-    const filename = `invoice-${uuidv4()}.pdf`; // or get from content-disposition
-    const filepath = path.join(tempDir, filename);
+    // Get the file from the form data
+    const fileMatch = event.body.match(/filename="([^"]+)"[\s\S]*?\r\n\r\n([\s\S]*?)\r\n--/);
+    if (!fileMatch) {
+      throw new Error('No file found in request');
+    }
     
-    await fs.promises.writeFile(filepath, fileData);
+    const filename = fileMatch[1] || `invoice-${uuidv4()}.pdf`;
+    const fileData = Buffer.from(fileMatch[2], 'binary');
     
+    // Create form data for LlamaCloud API
+    const form = new FormData();
+    form.append('file', fileData, {
+      filename: filename,
+      contentType: 'application/pdf'
+    });
+    form.append('language', 'en');
+    form.append('premium_mode', 'true');
     // Call LlamaCloud API
     const apiKey = process.env.LLAMA_CLOUD_API_KEY;
     if (!apiKey) {
       throw new Error('LLAMA_CLOUD_API_KEY environment variable is not set');
     }
 
-    const formData = new FormData();
-    formData.append('file', fs.createReadStream(filepath), {
-      filename: filename,
-      contentType: 'application/pdf'
-    });
-    formData.append('language', 'en');
-    formData.append('premium_mode', 'true');
-
     const response = await fetch('https://api.llamacloud.ai/v1/parse', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
-        ...formData.getHeaders()
+        ...form.getHeaders()
       },
-      body: formData
+      body: form.getBuffer()
     });
 
     if (!response.ok) {
@@ -78,11 +61,9 @@ exports.handler = async (event, context) => {
 
     const result = await response.json();
     
-    // Clean up temp file
-    await fs.promises.unlink(filepath).catch(console.error);
-    
     return {
       statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         status: 'success',
         message: 'Invoice processed successfully',
@@ -99,6 +80,7 @@ exports.handler = async (event, context) => {
     
     return {
       statusCode: 500,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         status: 'error',
         message: error.message || 'Failed to process invoice',
