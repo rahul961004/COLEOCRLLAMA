@@ -3,18 +3,20 @@
   "version": "1.0.0",
   "description": "Llama OCR - Invoice Processing with Netlify Functions",
   "scripts": {
-    "build": "npm install && cd netlify/functions && npm install",
-    "dev": "netlify dev"
+    "build": "npm install",
+    "dev": "netlify dev",
+    "start": "netlify dev"
   },
   "keywords": [],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@netlify/plugin-functions-install-core": "^1.0.4",
     "form-data": "^4.0.0",
-    "formidable": "^3.5.0",
     "fs-extra": "^11.1.1",
     "node-fetch": "^2.6.9",
     "uuid": "^9.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

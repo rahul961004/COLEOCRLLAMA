@@ -128,25 +128,43 @@
                     body: formData
                 };
 
-                // Call the Netlify function
-                const response = await fetch('/.netlify/functions/process-invoice', {
-                    method: 'POST',
-                    body: formData
-                });
-                const data = await response.json();
+                // Show loading state
+                logToConsole('Uploading and processing invoice...');
+                const processBtn = document.getElementById('processBtn');
+                processBtn.disabled = true;
+                processBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Processing...';
                 
-                if (!response.ok) {
-                    throw new Error(data.message || 'Failed to process invoice');
-                }
-
-                logToConsole(`Status: ${data.status} — ${data.message}`);
-                if (data.status === 'warning') {
-                    showAlert('warning', data.message);
-                }
-                currentData = data.data;
-                if (data.excel_file) {
-                    document.getElementById('excelDownload').href = BASE_URL + data.excel_file;
-                    document.getElementById('excelDownload').style.display = 'inline';
+                try {
+                    // Call the Netlify function
+                    const response = await fetch('/.netlify/functions/process-invoice', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(data.message || 'Failed to process invoice');
+                    }
+                    
+                    logToConsole(`Status: ${data.status} — ${data.message}`);
+                    if (data.status === 'warning') {
+                        logToConsole(`Warning: ${data.message}`, 'warning');
+                    }
+                    
+                    // Update UI with results
+                    currentData = data.data;
+                    renderData();
+                    
+                    return data;
+                } catch (error) {
+                    logToConsole(`Error: ${error.message}`, 'error');
+                    showAlert('danger', error.message);
+                    throw error;
+                } finally {
+                    // Reset button state
+                    processBtn.disabled = false;
+                    processBtn.innerHTML = 'Process Invoice';
                 }
                 renderData();
             } catch (error) {

@@ -1,44 +1,79 @@
 const { v4: uuidv4 } = require('uuid');
 const fetch = require('node-fetch');
 const FormData = require('form-data');
-const fs = require('fs');
-const path = require('path');
 
 // Process the invoice using LlamaCloud API
 exports.handler = async (event, context) => {
+  // Set CORS headers
+  const headers = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS'
+  };
+
+  // Handle OPTIONS request for CORS preflight
+  if (event.httpMethod === 'OPTIONS') {
+    return {
+      statusCode: 200,
+      headers,
+      body: ''
+    };
+  }
+
   // Only allow POST requests
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'Method Not Allowed' }),
+      headers,
+      body: JSON.stringify({ error: 'Method Not Allowed' })
     };
   }
 
   try {
     // Parse the multipart form data
+    if (!event.body || !event.headers['content-type']) {
+      throw new Error('Invalid request: Missing body or content-type header');
+    }
+
+    // Get the file from the form data
     const boundary = event.headers['content-type'].split('boundary=')[1];
     if (!boundary) {
       throw new Error('No boundary found in content-type header');
     }
-    
-    // Get the file from the form data
-    const fileMatch = event.body.match(/filename="([^"]+)"[\s\S]*?\r\n\r\n([\s\S]*?)\r\n--/);
-    if (!fileMatch) {
-      throw new Error('No file found in request');
+
+    // Simple parsing of multipart form data
+    const parts = event.body.split(`--${boundary}`);
+    let fileData = null;
+    let filename = `invoice-${uuidv4()}.pdf`;
+
+    for (const part of parts) {
+      if (part.includes('filename=')) {
+        const filenameMatch = part.match(/filename="([^"]+)"/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+        const match = part.match(/\r\n\r\n([\s\S]*?)\r\n--/);
+        if (match && match[1]) {
+          fileData = Buffer.from(match[1]);
+          break;
+        }
+      }
     }
-    
-    const filename = fileMatch[1] || `invoice-${uuidv4()}.pdf`;
-    const fileData = Buffer.from(fileMatch[2], 'binary');
-    
+
+    if (!fileData) {
+      throw new Error('No file data found in request');
+    }
+
     // Create form data for LlamaCloud API
     const form = new FormData();
     form.append('file', fileData, {
-      filename: filename,
+      filename,
       contentType: 'application/pdf'
     });
     form.append('language', 'en');
     form.append('premium_mode', 'true');
+
     // Call LlamaCloud API
     const apiKey = process.env.LLAMA_CLOUD_API_KEY;
     if (!apiKey) {
@@ -51,7 +86,7 @@ exports.handler = async (event, context) => {
         'Authorization': `Bearer ${apiKey}`,
         ...form.getHeaders()
       },
-      body: form.getBuffer()
+      body: form
     });
 
     if (!response.ok) {
@@ -63,7 +98,7 @@ exports.handler = async (event, context) => {
     
     return {
       statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         status: 'success',
         message: 'Invoice processed successfully',
@@ -80,7 +115,7 @@ exports.handler = async (event, context) => {
     
     return {
       statusCode: 500,
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         status: 'error',
         message: error.message || 'Failed to process invoice',
