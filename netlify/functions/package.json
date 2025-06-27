@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "description": "Netlify functions for Llama OCR",
   "main": "process-invoice.js",
-  "type": "commonjs",
+  "type": "module",
   "dependencies": {
-    "form-data": "^4.0.0"
+    "form-data": "^4.0.0",
+    "node-fetch": "^3.3.2"
   },
   "devDependencies": {
     "@netlify/functions": "^2.0.0"
