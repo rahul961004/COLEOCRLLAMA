@@ -5,8 +5,7 @@
   "main": "process-invoice.js",
   "type": "commonjs",
   "dependencies": {
-    "@llamaindex/cloud": "^4.0.16",
-    "form-data": "^4.0.0"
+    "llama-cloud-services": "^0.6.37"
   },
   "devDependencies": {
     "@netlify/functions": "^2.0.0"

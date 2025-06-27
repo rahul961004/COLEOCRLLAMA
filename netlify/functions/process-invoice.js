@@ -1,5 +1,4 @@
-const FormData = require('form-data');
-const { LlamaClient } = require('@llamaindex/cloud');
+const { LlamaParse } = require('llama-cloud-services');
 
 // Process the invoice using LlamaCloud API
 exports.handler = async (event, context) => {
@@ -79,92 +78,37 @@ exports.handler = async (event, context) => {
       size: fileData.content.length
     });
 
-    // Initialize LlamaCloud client
-    const client = new LlamaClient({
+    // Initialize LlamaParse client with EU base URL
+    const parser = new LlamaParse({
       apiKey: process.env.LLAMA_CLOUD_API_KEY,
-      baseUrl: 'https://api.llamacloud.ai',
-      timeout: 30000
+      baseUrl: EU_BASE_URL,
+      numWorkers: 1,
+      verbose: true
     });
 
-    try {
-      console.log('Processing document with LlamaCloud...');
-      
-      // Submit the document
-      const result = await client.parseDocument({
-        file: fileData.content,
-        filename: fileData.fileName,
-        outputFormat: 'markdown'
-      });
+    // Submit the document
+    const result = await parser.parse({
+      file: fileData.content,
+      filename: fileData.fileName,
+      resultType: 'markdown'
+    });
 
-      return {
-        statusCode: 200,
-        headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          status: 'success',
-          message: 'Invoice processed successfully',
-          data: {
-            markdown: result.markdown || '',
-            text: result.text || '',
-            metadata: result.job_metadata || {}
-          }
-        })
-      };
-    } catch (error) {
-      console.error('LlamaCloud processing error:', error);
-      
-      // Try with IP fallback if DNS resolution fails
-      if (error.code === 'ENOTFOUND') {
-        console.log('Trying with IP fallback...');
-        
-        // Update client with IP address
-        client.config.baseUrl = 'https://34.107.221.82';
-        client.config.rejectUnauthorized = false;
-
-        try {
-          const result = await client.parseDocument({
-            file: event.body,
-            filename: event.headers['x-filename'] || 'invoice.pdf',
-            outputFormat: 'markdown'
-          });
-
-          return {
-            statusCode: 200,
-            headers: {
-              'Access-Control-Allow-Origin': '*',
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              status: 'success',
-              message: 'Invoice processed successfully',
-              data: {
-                markdown: result.markdown || '',
-                text: result.text || '',
-                metadata: result.job_metadata || {}
-              }
-            })
-          };
-        } catch (ipError) {
-          console.error('IP-based connection failed:', ipError);
-          return {
-            statusCode: 500,
-            headers: {
-              'Access-Control-Allow-Origin': '*',
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              status: 'error',
-              message: 'Failed to connect to LlamaCloud API',
-              error: ipError.message
-            })
-          };
+    return {
+      statusCode: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        status: 'success',
+        message: 'Invoice processed successfully',
+        data: {
+          markdown: result.markdown || '',
+          text: result.text || '',
+          metadata: result.job_metadata || {}
         }
-      } else {
-        throw error;
-      }
-    }
+      })
+    };
   } catch (error) {
     console.error('Error processing invoice:', error);
     return {
@@ -176,8 +120,7 @@ exports.handler = async (event, context) => {
       body: JSON.stringify({
         status: 'error',
         message: 'Error processing invoice',
-        error: error.message,
-        stack: error.stack
+        error: error.message
       })
     };
   }
