@@ -4,14 +4,15 @@
   "description": "Netlify functions for Llama OCR",
   "main": "process-invoice.js",
   "dependencies": {
-    "formidable": "^3.5.0",
-    "fs-extra": "^11.1.1",
-    "node-fetch": "^2.6.9",
-    "path": "^0.12.7",
-    "util": "^0.12.5",
+    "form-data": "^4.0.0",
+    "https-proxy-agent": "^7.0.0",
+    "node-fetch": "^3.3.0",
     "uuid": "^9.0.0"
   },
   "devDependencies": {
-    "@netlify/functions": "^1.0.0"
+    "@netlify/functions": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
   }
 }

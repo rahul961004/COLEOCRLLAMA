@@ -1,15 +1,19 @@
 [build]
-  publish = "."
-  command = "npm install"
+  publish = "dist"
+  command = "npm install && npm run build"
   functions = "netlify/functions"
 
 [functions]
   node_bundler = "esbuild"
-  external_node_modules = ["formidable", "form-data", "node-fetch"]
+  external_node_modules = ["form-data", "node-fetch", "uuid"]
   included_files = ["netlify/functions/*.js"]
+  NODE_OPTIONS = "--dns-result-order=ipv4first"
 
 [build.environment]
   NODE_VERSION = "18"
+  NPM_VERSION = "9"
+  NODE_OPTIONS = "--max_old_space_size=4096"
+  NODE_EXTRA_CA_CERTS = "/etc/ssl/certs/ca-certificates.crt"
   NPM_FLAGS = "--prefix netlify/functions"
 
 [dev]

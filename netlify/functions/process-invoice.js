@@ -169,21 +169,16 @@ exports.handler = async (event, context) => {
     form.append('language', 'en');
     form.append('premium_mode', 'true');
 
-    // Call LlamaCloud API
-    const apiKey = process.env.LLAMA_CLOUD_API_KEY;
-    if (!apiKey) {
-      const error = 'LLAMA_CLOUD_API_KEY environment variable is not set';
-      console.error('Error:', error);
-      throw new Error(error);
-    }
-
+    // Call LlamaCloud API with retry logic
     console.log('Sending request to LlamaCloud API...');
     const apiUrl = 'https://api.llamacloud.ai/v1/parse';
     const apiHeaders = {
-      'Authorization': `Bearer ${apiKey}`,
-      ...form.getHeaders()
+      'Authorization': `Bearer ${process.env.LLAMA_CLOUD_API_KEY}`,
+      'Accept': 'application/json',
+      ...(form.getHeaders ? form.getHeaders() : {})
     };
 
+    // Log request details (without sensitive data)
     console.log('API Request:', {
       url: apiUrl,
       method: 'POST',
@@ -194,20 +189,60 @@ exports.handler = async (event, context) => {
       body: `[FormData with ${fileData.length} bytes]`
     });
 
-    const response = await fetch(apiUrl, {
+    // Use node-fetch directly with DNS cache options
+    const fetchOptions = {
       method: 'POST',
       headers: apiHeaders,
-      body: form
-    });
+      body: form,
+      timeout: 30000, // 30 second timeout
+      agent: new (require('https').Agent)({ 
+        keepAlive: true,
+        timeout: 30000,
+        rejectUnauthorized: true
+      })
+    };
+
+    // Try with direct connection first
+    let response;
+    try {
+      console.log('Trying direct connection to LlamaCloud API...');
+      response = await fetch(apiUrl, fetchOptions);
+    } catch (error) {
+      console.error('Direct connection failed, trying with DNS resolution workaround:', error);
+      
+      // If direct connection fails, try with hardcoded IP
+      try {
+        const ipApiUrl = 'https://34.107.221.82/v1/parse';
+        console.log('Trying with direct IP connection to:', ipApiUrl);
+        response = await fetch(ipApiUrl, {
+          ...fetchOptions,
+          headers: {
+            ...fetchOptions.headers,
+            'Host': 'api.llamacloud.ai'
+          }
+        });
+      } catch (ipError) {
+        console.error('IP-based connection failed:', ipError);
+        throw new Error(`Failed to connect to LlamaCloud API: ${ipError.message}`);
+      }
+    }
 
     const responseText = await response.text();
-    console.log(`API Response: ${response.status}`, responseText.substring(0, 500) + (responseText.length > 500 ? '...' : ''));
+    console.log(`API Response Status: ${response.status}`);
+    console.log('Response Headers:', JSON.stringify([...response.headers.entries()]));
+    console.log('Response Body (first 500 chars):', responseText.substring(0, 500) + (responseText.length > 500 ? '...' : ''));
 
     if (!response.ok) {
       throw new Error(`API Error: ${response.status} - ${responseText}`);
     }
 
-    const result = JSON.parse(responseText);
+    let result;
+    try {
+      result = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('Failed to parse API response:', parseError);
+      throw new Error(`Invalid JSON response from API: ${responseText.substring(0, 200)}...`);
+    }
     console.log('Processing completed successfully');
     
     return {
