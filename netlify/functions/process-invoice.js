@@ -1,4 +1,4 @@
-const { LlamaParse } = require('llama-cloud-services');
+const https = require('https');
 
 // Process the invoice using LlamaCloud API
 exports.handler = async (event, context) => {
@@ -78,19 +78,63 @@ exports.handler = async (event, context) => {
       size: fileData.content.length
     });
 
-    // Initialize LlamaParse client with EU base URL
-    const parser = new LlamaParse({
-      apiKey: process.env.LLAMA_CLOUD_API_KEY,
-      baseUrl: EU_BASE_URL,
-      numWorkers: 1,
-      verbose: true
-    });
-
-    // Submit the document
-    const result = await parser.parse({
-      file: fileData.content,
+    // Submit the document to LlamaCloud API
+    const formData = new FormData();
+    formData.append('file', fileData.content, {
       filename: fileData.fileName,
-      resultType: 'markdown'
+      contentType: fileData.mimeType
+    });
+    formData.append('result_type', 'markdown');
+
+    const options = {
+      hostname: 'api.llamacloud.ai',
+      port: 443,
+      path: '/v1/parse',
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.LLAMA_CLOUD_API_KEY}`,
+        ...formData.getHeaders()
+      }
+    };
+
+    return new Promise((resolve, reject) => {
+      const req = https.request(options, (res) => {
+        let data = '';
+        
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+        
+        res.on('end', () => {
+          try {
+            const result = JSON.parse(data);
+            resolve({
+              statusCode: 200,
+              headers: {
+                'Access-Control-Allow-Origin': '*',
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                status: 'success',
+                message: 'Invoice processed successfully',
+                data: {
+                  markdown: result.markdown || '',
+                  text: result.text || '',
+                  metadata: result.job_metadata || {}
+                }
+              })
+            });
+          } catch (error) {
+            reject(new Error('Failed to parse response: ' + error.message));
+          }
+        });
+      });
+
+      req.on('error', (error) => {
+        reject(error);
+      });
+
+      formData.pipe(req);
     });
 
     return {
