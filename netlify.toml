@@ -5,8 +5,10 @@
 
 [functions]
   node_bundler = "esbuild"
-  external_node_modules = ["form-data", "node-fetch", "uuid"]
+  external_node_modules = ["axios", "form-data", "uuid"]
   included_files = ["netlify/functions/*.js"]
+  # Force Node.js 18.x
+  node_bridge = true
 
 [build.environment]
   NODE_VERSION = "18"

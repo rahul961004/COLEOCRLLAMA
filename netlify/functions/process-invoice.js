@@ -1,6 +1,7 @@
 const { v4: uuidv4 } = require('uuid');
-const fetch = require('node-fetch');
 const FormData = require('form-data');
+const axios = require('axios');
+const https = require('https');
 
 // Helper function to parse multipart form data
 const parseMultipartFormData = (event) => {
@@ -169,10 +170,19 @@ exports.handler = async (event, context) => {
     form.append('language', 'en');
     form.append('premium_mode', 'true');
 
-    // Call LlamaCloud API with retry logic
+    // Call LlamaCloud API with axios
     console.log('Sending request to LlamaCloud API...');
     const apiUrl = 'https://api.llamacloud.ai/v1/parse';
-    const apiHeaders = {
+    
+    // Create a custom HTTPS agent for better connection handling
+    const httpsAgent = new https.Agent({
+      keepAlive: true,
+      timeout: 30000,
+      rejectUnauthorized: true
+    });
+
+    // Prepare headers
+    const headers = {
       'Authorization': `Bearer ${process.env.LLAMA_CLOUD_API_KEY}`,
       'Accept': 'application/json',
       ...(form.getHeaders ? form.getHeaders() : {})
@@ -183,65 +193,58 @@ exports.handler = async (event, context) => {
       url: apiUrl,
       method: 'POST',
       headers: {
-        ...apiHeaders,
+        ...headers,
         'Authorization': 'Bearer [REDACTED]' // Don't log the actual API key
       },
-      body: `[FormData with ${fileData.length} bytes]`
+      data: `[FormData with ${fileData.length} bytes]`
     });
 
-    // Use node-fetch directly with DNS cache options
-    const fetchOptions = {
-      method: 'POST',
-      headers: apiHeaders,
-      body: form,
-      timeout: 30000, // 30 second timeout
-      agent: new (require('https').Agent)({ 
-        keepAlive: true,
-        timeout: 30000,
-        rejectUnauthorized: true
-      })
-    };
-
     // Try with direct connection first
-    let response;
     try {
       console.log('Trying direct connection to LlamaCloud API...');
-      response = await fetch(apiUrl, fetchOptions);
+      const response = await axios.post(apiUrl, form, {
+        headers,
+        httpsAgent,
+        timeout: 30000,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity
+      });
+
+      console.log(`API Response Status: ${response.status}`);
+      console.log('Response Headers:', response.headers);
+      
+      return response.data;
+      
     } catch (error) {
-      console.error('Direct connection failed, trying with DNS resolution workaround:', error);
+      console.error('Direct connection failed, trying with DNS resolution workaround:', error.message);
       
       // If direct connection fails, try with hardcoded IP
       try {
         const ipApiUrl = 'https://34.107.221.82/v1/parse';
         console.log('Trying with direct IP connection to:', ipApiUrl);
-        response = await fetch(ipApiUrl, {
-          ...fetchOptions,
+        
+        const response = await axios.post(ipApiUrl, form, {
           headers: {
-            ...fetchOptions.headers,
+            ...headers,
             'Host': 'api.llamacloud.ai'
-          }
+          },
+          httpsAgent,
+          timeout: 30000,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity
         });
+        
+        console.log(`IP-based connection successful, Status: ${response.status}`);
+        return response.data;
+        
       } catch (ipError) {
-        console.error('IP-based connection failed:', ipError);
+        console.error('IP-based connection failed:', ipError.message);
+        if (ipError.response) {
+          console.error('Response status:', ipError.response.status);
+          console.error('Response data:', ipError.response.data);
+        }
         throw new Error(`Failed to connect to LlamaCloud API: ${ipError.message}`);
       }
-    }
-
-    const responseText = await response.text();
-    console.log(`API Response Status: ${response.status}`);
-    console.log('Response Headers:', JSON.stringify([...response.headers.entries()]));
-    console.log('Response Body (first 500 chars):', responseText.substring(0, 500) + (responseText.length > 500 ? '...' : ''));
-
-    if (!response.ok) {
-      throw new Error(`API Error: ${response.status} - ${responseText}`);
-    }
-
-    let result;
-    try {
-      result = JSON.parse(responseText);
-    } catch (parseError) {
-      console.error('Failed to parse API response:', parseError);
-      throw new Error(`Invalid JSON response from API: ${responseText.substring(0, 200)}...`);
     }
     console.log('Processing completed successfully');
     
