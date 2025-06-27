@@ -267,55 +267,6 @@
       }
     }
     
-    // Form submission handler
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      
-      const fileInput = document.getElementById("invoiceFile");
-      if (!fileInput.files.length) return;
-      
-      const file = fileInput.files[0];
-      const formData = new FormData();
-      formData.append("file", file);
-      
-      // Reset UI
-      resultSection?.classList.add('d-none');
-      spinner.classList.remove("d-none");
-      addLog(`Processing ${file.name}...`);
-      
-      try {
-        const response = await fetch(`${apiUrl}/process-invoice/`, {
-          method: "POST",
-          body: formData,
-        });
-        
-        const data = await response.json();
-        
-        if (!response.ok) {
-          throw new Error(data.detail || "Error processing invoice");
-        }
-        
-        // Store the full response
-        currentData = data.data || data;
-        
-        // Initialize viewers
-        document.getElementById('jsonViewer').textContent = JSON.stringify(currentData.json || currentData, null, 2);
-        document.getElementById('markdownViewer').innerHTML = marked.parse(currentData.markdown || '');
-        document.getElementById('textViewer').textContent = currentData.text || '';
-        
-        // Show the result section and set default view
-        resultSection?.classList.remove('d-none');
-        setViewFormat('json');
-        
-        addLog('Invoice processed successfully!', 'success');
-        
-      } catch (err) {
-        console.error('Processing error:', err);
-        addLog(err.message, 'error');
-      } finally {
-        spinner.classList.add("d-none");
-      }
-    });
-  </script>
+    </script>
 </body>
 </html>
