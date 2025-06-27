@@ -70,7 +70,7 @@
                                 <input class="form-control" type="file" id="invoiceFile" required>
                                 <div class="form-text">Supports PDF, JPG, and PNG files</div>
                             </div>
-                            <button type="submit" class="btn btn-primary">Process Invoice</button>
+                            <button type="submit" id="processBtn" class="btn btn-primary">Process Invoice</button>
                         </form>
                         <div id="spinner" class="d-none">
                             <div class="spinner-border text-primary" role="status">
@@ -131,8 +131,10 @@
                 // Show loading state
                 logToConsole('Uploading and processing invoice...');
                 const processBtn = document.getElementById('processBtn');
-                processBtn.disabled = true;
-                processBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Processing...';
+                if (processBtn) {
+                    processBtn.disabled = true;
+                    processBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Processing...';
+                }
                 
                 try {
                     // Call the Netlify function
@@ -163,8 +165,10 @@
                     throw error;
                 } finally {
                     // Reset button state
-                    processBtn.disabled = false;
-                    processBtn.innerHTML = 'Process Invoice';
+                    if (processBtn) {
+                        processBtn.disabled = false;
+                        processBtn.innerHTML = 'Process Invoice';
+                    }
                 }
                 renderData();
             } catch (error) {
