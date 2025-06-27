@@ -1,6 +1,6 @@
 [build]
-  publish = "dist"
-  command = "npm install && npm run build"
+  publish = "."  # Publish from the root directory
+  command = "npm install --prefix netlify/functions"  # Only install function dependencies
   functions = "netlify/functions"
 
 [functions]
