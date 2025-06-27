@@ -137,31 +137,48 @@ exports.handler = async (event, context) => {
     const formHeaders = form.getHeaders();
     console.log('Form headers:', formHeaders);
 
-    // Function to make the API request
-    const makeRequest = (useIp = false) => {
+    // Function to submit document and get job ID
+    const submitDocument = (useIp = false) => {
       return new Promise((resolve, reject) => {
+        const apiKey = process.env.LLAMA_CLOUD_API_KEY;
+        console.log('Using API key:', apiKey ? '*****' + apiKey.slice(-4) : 'NO API KEY');
+        
         const options = {
           hostname: useIp ? '34.107.221.82' : 'api.llamacloud.ai',
-          path: '/v1/parse',
+          path: '/api/v1/parsing/job',
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${process.env.LLAMA_CLOUD_API_KEY}`,
+            'Authorization': `Bearer ${apiKey}`,
             'Accept': 'application/json',
             'Content-Type': formHeaders['content-type'],
             'Content-Length': formBuffer.length,
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
             ...(useIp ? { 'Host': 'api.llamacloud.ai' } : {})
           },
-          rejectUnauthorized: false, // Disable SSL verification
-          timeout: 30000,
+          agent: new https.Agent({
+            rejectUnauthorized: false,
+            keepAlive: true,
+            maxSockets: 10,
+            timeout: 30000
+          }),
           ciphers: 'ALL',
           secureOptions: require('constants').SSL_OP_NO_TLSv1 | require('constants').SSL_OP_NO_TLSv1_1
         };
         
-        console.log('Making request to:', useIp ? '34.107.221.82' : 'api.llamacloud.ai');
+        console.log('Submitting document to:', useIp ? '34.107.221.82' : 'api.llamacloud.ai');
+        console.log('Request options:', options);
 
         const req = https.request(options, (res) => {
           let data = [];
+          
+          console.log('Submission response status:', res.statusCode);
+          console.log('Submission response headers:', res.headers);
+          
+          if (res.statusCode !== 200) {
+            console.error(`Submission error: ${res.statusCode}`);
+            reject(new Error(`Submission error: ${res.statusCode}`));
+            return;
+          }
           
           res.on('data', (chunk) => {
             data.push(chunk);
@@ -170,31 +187,87 @@ exports.handler = async (event, context) => {
           res.on('end', () => {
             try {
               const response = Buffer.concat(data).toString();
-              console.log('Response:', response);
-              
-              // Check if we got HTML instead of JSON
-              if (response.includes('<html>') || response.includes('<!DOCTYPE html>')) {
-                console.error('Received HTML response instead of JSON');
-                reject(new Error('Received HTML response instead of JSON'));
-                return;
-              }
-              
+              console.log('Submission response:', response);
               const parsedResponse = JSON.parse(response);
-              resolve(parsedResponse);
+              resolve(parsedResponse.job_id);
             } catch (err) {
-              console.error('Error parsing response:', err);
-              reject(new Error(`Failed to parse response: ${err.message}`));
+              console.error('Error parsing submission response:', err);
+              reject(new Error(`Failed to parse submission response: ${err.message}`));
             }
           });
         });
 
         req.on('error', (err) => {
-          console.error('Request error:', err);
+          console.error('Submission error:', err);
           reject(err);
         });
 
-        // Write data to request body
         req.write(formBuffer);
+        req.end();
+      });
+    };
+
+    // Function to get job result
+    const getJobResult = (jobId, useIp = false) => {
+      return new Promise((resolve, reject) => {
+        const apiKey = process.env.LLAMA_CLOUD_API_KEY;
+        const options = {
+          hostname: useIp ? '34.107.221.82' : 'api.llamacloud.ai',
+          path: `/api/v1/parsing/job/${jobId}/result/markdown`,
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+            ...(useIp ? { 'Host': 'api.llamacloud.ai' } : {})
+          },
+          agent: new https.Agent({
+            rejectUnauthorized: false,
+            keepAlive: true,
+            maxSockets: 10,
+            timeout: 30000
+          }),
+          ciphers: 'ALL',
+          secureOptions: require('constants').SSL_OP_NO_TLSv1 | require('constants').SSL_OP_NO_TLSv1_1
+        };
+        
+        console.log('Getting job result for:', jobId);
+        console.log('Request options:', options);
+
+        const req = https.request(options, (res) => {
+          let data = [];
+          
+          console.log('Result response status:', res.statusCode);
+          console.log('Result response headers:', res.headers);
+          
+          if (res.statusCode !== 200) {
+            console.error(`Result error: ${res.statusCode}`);
+            reject(new Error(`Result error: ${res.statusCode}`));
+            return;
+          }
+          
+          res.on('data', (chunk) => {
+            data.push(chunk);
+          });
+
+          res.on('end', () => {
+            try {
+              const response = Buffer.concat(data).toString();
+              console.log('Result response:', response);
+              const parsedResponse = JSON.parse(response);
+              resolve(parsedResponse);
+            } catch (err) {
+              console.error('Error parsing result response:', err);
+              reject(new Error(`Failed to parse result response: ${err.message}`));
+            }
+          });
+        });
+
+        req.on('error', (err) => {
+          console.error('Result error:', err);
+          reject(err);
+        });
+
         req.end();
       });
     };
@@ -202,7 +275,21 @@ exports.handler = async (event, context) => {
     // Try direct connection first
     try {
       console.log('Trying direct connection to LlamaCloud API...');
-      const response = await makeRequest(false);
+      const jobId = await submitDocument(false);
+      const result = await getJobResult(jobId, false);
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          status: 'success',
+          message: 'Invoice processed successfully',
+          data: {
+            json: response,
+            markdown: response.markdown || '',
+            text: response.text || ''
+          }
+        })
+      };
       return response.data;
     } catch (error) {
       console.error('Direct connection failed, trying with IP address...', error.message);
