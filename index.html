@@ -118,8 +118,10 @@
             }
             
             const file = fileInput.files[0];
+            
+            // Create FormData and append file with additional metadata
             const formData = new FormData();
-            formData.append('file', file);
+            formData.append('file', file, file.name);
             
             // Show loading state
             logToConsole(`Uploading ${file.name} (${(file.size / 1024).toFixed(2)} KB)...`);
@@ -152,6 +154,7 @@
                         // If we can't parse JSON, use the status text
                         const text = await response.text();
                         errorMessage = text || errorMessage;
+                        console.error('Error parsing error response:', e);
                     }
                     throw new Error(errorMessage);
                 }

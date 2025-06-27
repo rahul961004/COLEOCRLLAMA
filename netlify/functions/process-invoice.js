@@ -4,33 +4,55 @@ const FormData = require('form-data');
 
 // Helper function to parse multipart form data
 const parseMultipartFormData = (event) => {
-  console.log('Parsing multipart form data...');
+  console.log('Parsing request...');
+  console.log('Headers:', JSON.stringify(event.headers, null, 2));
+  console.log('Is base64 encoded:', event.isBase64Encoded);
   
   if (!event.body) {
     throw new Error('No request body found');
   }
-  
-  if (!event.headers || !event.headers['content-type']) {
-    throw new Error('Content-Type header is missing');
-  }
 
-  // Extract boundary from content-type header
-  const contentType = event.headers['content-type'];
-  const boundaryMatch = contentType.match(/boundary=([^;]+)/i);
-  
-  if (!boundaryMatch) {
-    throw new Error('No boundary found in Content-Type header');
-  }
-  
-  const boundary = '--' + boundaryMatch[1].trim();
-  console.log('Boundary:', boundary);
-
-  // Handle base64 encoded body if needed
+  // Handle base64 encoded body
   const body = event.isBase64Encoded 
     ? Buffer.from(event.body, 'base64').toString('binary')
     : event.body;
     
   console.log('Body length:', body.length);
+  
+  // If the body is empty or too small, throw an error
+  if (!body || body.length < 10) {
+    throw new Error('Request body is empty or too small');
+  }
+
+  // Try to find the boundary from Content-Type header
+  let boundary = null;
+  if (event.headers && event.headers['content-type']) {
+    const contentType = event.headers['content-type'];
+    const boundaryMatch = contentType.match(/boundary=([^;]+)/i);
+    if (boundaryMatch && boundaryMatch[1]) {
+      boundary = '--' + boundaryMatch[1].trim();
+      console.log('Found boundary in header:', boundary);
+    }
+  }
+  
+  // If no boundary in header, try to find it in the body
+  if (!boundary) {
+    const firstLine = body.split('\r\n')[0];
+    if (firstLine && firstLine.startsWith('--')) {
+      boundary = firstLine.trim();
+      console.log('Found boundary in body:', boundary);
+    }
+  }
+  
+  if (!boundary) {
+    console.error('No boundary found in request');
+    // If we can't find a boundary, try to process as direct file upload
+    return {
+      fileData: Buffer.from(event.isBase64Encoded ? event.body : Buffer.from(event.body).toString('base64'), 'base64'),
+      filename: `invoice-${uuidv4()}.pdf`,
+      contentType: event.headers['content-type'] || 'application/octet-stream'
+    };
+  }
 
   // Split the body into parts using the boundary
   const parts = body.split(boundary);
@@ -41,7 +63,7 @@ const parseMultipartFormData = (event) => {
   let fileContentType = 'application/octet-stream';
 
   for (const part of parts) {
-    if (!part || part.trim() === '' || part.includes('--')) {
+    if (!part || part.trim() === '' || part.trim().endsWith('--')) {
       continue;
     }
     
@@ -50,14 +72,14 @@ const parseMultipartFormData = (event) => {
     if (headerEnd === -1) continue;
     
     const headers = part.substring(0, headerEnd);
-    const content = part.substring(headerEnd + 4).trim();
+    const content = part.substring(headerEnd + 4);
     
     // Check if this part contains a file
     if (headers.includes('filename=')) {
       // Extract filename
       const filenameMatch = headers.match(/filename=["']?([^"'\r\n]+)/i);
       if (filenameMatch && filenameMatch[1]) {
-        filename = filenameMatch[1].trim();
+        filename = filenameMatch[1].trim().replace(/[^\w\d.-]/g, '_');
       }
       
       // Extract content type
@@ -66,11 +88,8 @@ const parseMultipartFormData = (event) => {
         fileContentType = contentTypeMatch[1].trim();
       }
       
-      // Get the file content (remove trailing boundary if exists)
-      const contentEnd = content.lastIndexOf('\r\n');
-      const fileContent = contentEnd !== -1 ? content.substring(0, contentEnd) : content;
-      
-      fileData = Buffer.from(fileContent, 'binary');
+      // Get the file content
+      fileData = Buffer.from(content, 'binary');
       console.log(`Found file: ${filename}, type: ${fileContentType}, size: ${fileData.length} bytes`);
       break;
     }
@@ -78,7 +97,14 @@ const parseMultipartFormData = (event) => {
 
   if (!fileData) {
     console.error('No file data found in the request');
-    throw new Error('No file data found in request');
+    // If no file found in multipart, try to use the raw body
+    if (body.length > 0) {
+      console.log('Using raw body as file data');
+      fileData = Buffer.from(body, 'binary');
+      filename = `invoice-${uuidv4()}.${fileContentType.split('/').pop() || 'bin'}`;
+    } else {
+      throw new Error('No file data found in request');
+    }
   }
 
   return { 
