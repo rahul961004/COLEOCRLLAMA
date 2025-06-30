@@ -1,28 +1,54 @@
+// Import required modules
 const { OpenAI } = require('openai');
 const { Buffer } = require('buffer');
 
-// Initialize OpenAI client
+// Initialize OpenAI client with environment variable
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
 // Assistant ID for the OCR assistant
-const ASSISTANT_ID = 'asst_aNfZhZ89VDaG9gtVdmVR0QQn'; // Replace with your assistant ID
+const ASSISTANT_ID = 'asst_aNfZhZ89VDaG9gtVdmVR0QQn';
+
+// Helper function to handle errors
+function createErrorResponse(statusCode, message, details = null) {
+  return {
+    statusCode,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS'
+    },
+    body: JSON.stringify({
+      error: message,
+      ...(details && { details })
+    })
+  };
+}
 
 /**
  * Uploads a file to OpenAI and returns the file ID
  */
 async function uploadFileToOpenAI(fileData) {
-  const { name, type, data } = fileData;
-  const buffer = Buffer.from(data, 'base64');
-  
-  const file = await openai.files.create({
-    file: buffer,
-    purpose: 'assistants',
-    filename: name
-  });
-  
-  return file.id;
+  try {
+    const { name, data } = fileData;
+    console.log(`Uploading file: ${name} (${data.length} bytes)`);
+    
+    const buffer = Buffer.from(data, 'base64');
+    
+    const file = await openai.files.create({
+      file: buffer,
+      purpose: 'assistants',
+      filename: name
+    });
+    
+    console.log(`File uploaded successfully. File ID: ${file.id}`);
+    return file.id;
+  } catch (error) {
+    console.error('Error uploading file to OpenAI:', error);
+    throw new Error(`Failed to upload file: ${error.message}`);
+  }
 }
 
 /**
@@ -44,49 +70,62 @@ async function processFileWithOCR(fileData) {
       ]
     });
     
-    // Run the assistant
-    const run = await openai.beta.threads.runs.create(
-      thread.id,
-      { 
-        assistant_id: ASSISTANT_ID,
-        instructions: `You are an expert at extracting structured data from invoices and receipts. 
-        Extract all relevant information including:
-        - Vendor details (name, address, contact)
-        - Invoice number and date
-        - Line items (description, quantity, unit price, total)
-        - Tax and total amounts
-        - Payment terms
-        - Any other relevant information
-        
-        Return the data in a structured JSON format.`
-      }
-    );
+    // 3. Add the file to the thread
+    console.log('Adding message to thread...');
+    await openai.beta.threads.messages.create(thread.id, {
+      role: 'user',
+      content: 'Please extract all the information from this file and return it in a structured JSON format.',
+      file_ids: [fileId]
+    });
     
-    // Wait for the run to complete
+    // 4. Run the assistant
+    console.log('Running assistant...');
+    const run = await openai.beta.threads.runs.create(thread.id, {
+      assistant_id: ASSISTANT_ID
+    });
+    
+    console.log(`Run created with ID: ${run.id}`);
+    
+    // 5. Wait for the run to complete
+    console.log('Waiting for run to complete...');
     const completedRun = await waitForRunCompletion(thread.id, run.id);
     
     if (completedRun.status !== 'completed') {
-      throw new Error(`Run failed with status: ${completedRun.status}`);
+      console.error('Run did not complete successfully:', completedRun);
+      throw new Error(`Run failed with status: ${completedRun.status}. Last error: ${completedRun.last_error?.message || 'No error details'}`);
     }
     
-    // Get the messages from the thread
+    // 6. Get the assistant's response
+    console.log('Retrieving assistant response...');
     const messages = await openai.beta.threads.messages.list(thread.id);
-    const lastMessage = messages.data[0];
+    const assistantMessages = messages.data.filter(m => m.role === 'assistant');
     
-    if (!lastMessage || !lastMessage.content || lastMessage.content.length === 0) {
+    if (assistantMessages.length === 0) {
       throw new Error('No response from assistant');
     }
     
-    // Extract the text content from the message
-    const textContent = lastMessage.content
-      .filter(part => part.type === 'text')
-      .map(part => part.text.value)
-      .join('\n');
+    // 7. Extract the response
+    const response = assistantMessages[0].content[0];
     
-    if (!textContent) {
-      throw new Error('No text content in the assistant response');
+    if (response.type === 'text') {
+      console.log('Received text response from assistant');
+      // Try to parse the response as JSON if it looks like JSON
+      try {
+        const jsonMatch = response.text.value.match(/```(?:json)?\n([\s\S]*?)\n```/);
+        if (jsonMatch) {
+          return JSON.parse(jsonMatch[1]);
+        }
+        return response.text.value;
+      } catch (e) {
+        console.log('Could not parse response as JSON, returning as text');
+        return response.text.value;
+      }
+    } else if (response.type === 'file') {
+      console.log('Received file response from assistant');
+      return { fileId: response.file_id };
     }
     
+    return response;
     // Try to parse the result as JSON
     try {
       return JSON.parse(textContent);
@@ -104,23 +143,51 @@ async function processFileWithOCR(fileData) {
 /**
  * Waits for a run to complete and returns the final run status
  */
-async function waitForRunCompletion(threadId, runId) {
-  let run = await openai.threads.runs.retrieve(threadId, runId);
+async function waitForRunCompletion(threadId, runId, maxAttempts = 30) {
   let attempts = 0;
-  const maxAttempts = 60; // 60 seconds max wait time
+  let run;
   
-  // Wait for the run to complete
-  while ((run.status === 'queued' || run.status === 'in_progress') && attempts < maxAttempts) {
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
-    run = await openai.threads.runs.retrieve(threadId, runId);
+  while (attempts < maxAttempts) {
     attempts++;
+    
+    try {
+      run = await openai.beta.threads.runs.retrieve(threadId, runId);
+      console.log(`Run status (attempt ${attempts}/${maxAttempts}):`, run.status);
+      
+      // If the run is completed, return the result
+      if (run.status === 'completed') {
+        return run;
+      }
+      
+      // If the run failed, throw an error
+      if (run.status === 'failed' || run.status === 'cancelled' || run.status === 'expired') {
+        console.error('Run failed with status:', run.status);
+        if (run.last_error) {
+          console.error('Last error:', run.last_error);
+        }
+        throw new Error(`Run ${run.status}: ${run.last_error?.message || 'No error details'}`);
+      }
+      
+      // If the run requires action, handle it (e.g., function calling)
+      if (run.status === 'requires_action' && run.required_action?.submit_tool_outputs) {
+        console.log('Run requires action, submitting empty outputs...');
+        await openai.beta.threads.runs.submitToolOutputs(
+          threadId,
+          runId,
+          { tool_outputs: [] } // Submit empty outputs for now
+        );
+      }
+      
+      // Wait before polling again
+      await new Promise(resolve => setTimeout(resolve, 2000)); // 2 seconds
+      
+    } catch (error) {
+      console.error('Error in waitForRunCompletion:', error);
+      throw new Error(`Failed to complete run: ${error.message}`);
+    }
   }
   
-  if (attempts >= maxAttempts) {
-    throw new Error('Run timed out');
-  }
-  
-  return run;
+  throw new Error(`Run did not complete after ${maxAttempts} attempts. Last status: ${run?.status}`);
 }
 
 // Main handler function
@@ -168,78 +235,63 @@ exports.handler = async (event) => {
       };
     }
 
-    if (files.length === 0) {
-      return {
-        statusCode: 400,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*'
-        },
-        body: JSON.stringify({ error: 'No files provided' })
-      };
+    if (!Array.isArray(filesToProcess) || filesToProcess.length === 0) {
+      return createErrorResponse(400, 'No files provided for processing');
     }
 
-    console.log(`Processing ${files.length} files...`);
-    
-    // Process each file with the OCR agent
-    const processingPromises = files.map(file => 
-      processFileWithOCR(file).catch(error => ({
-        filename: file.name || 'unknown',
-        error: error.message,
-        success: false
-      }))
+    console.log(`Processing ${filesToProcess.length} file(s)`);
+
+    // Process each file in parallel
+    const results = await Promise.all(
+      filesToProcess.map(async (file) => {
+        try {
+          console.log(`Processing file: ${file.name}`);
+          const result = await processFileWithOCR(file);
+          return {
+            fileName: file.name,
+            success: true,
+            data: result
+          };
+        } catch (error) {
+          console.error(`Error processing file ${file.name}:`, error);
+          return {
+            fileName: file.name,
+            success: false,
+            error: error.message
+          };
+        }
+      })
     );
+
+    // Count successful and failed operations
+    const successful = results.filter(r => r.success).length;
+    const failed = results.length - successful;
     
-    // Wait for all files to be processed
-    const results = await Promise.all(processingPromises);
-    
-    // Check for any processing errors
-    const hasErrors = results.some(result => result.error);
-    if (hasErrors) {
-      console.error('Some files failed to process:', results);
-      return {
-        statusCode: 207, // Multi-status
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*'
-        },
-        body: JSON.stringify({
-          message: 'Some files could not be processed',
-          results
-        })
-      };
-    }
-    
-    // Return the extracted data
+    console.log(`Processing complete. Success: ${successful}, Failed: ${failed}`);
+
+    // Return the results
     return {
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0'
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS'
       },
       body: JSON.stringify({
         success: true,
-        data: results,
-        processedAt: new Date().toISOString()
+        processedCount: successful,
+        failedCount: failed,
+        data: results
       })
     };
-
   } catch (error) {
-    console.error('Error processing invoice:', error);
-    return {
-      statusCode: 500,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*'
-      },
-      body: JSON.stringify({
-        error: error.message,
-        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      })
-    };
+    console.error('Unhandled error in handler:', error);
+    return createErrorResponse(
+      500, 
+      'Internal Server Error', 
+      process.env.NODE_ENV === 'development' ? error.stack : undefined
+    );
   }
 };
 
