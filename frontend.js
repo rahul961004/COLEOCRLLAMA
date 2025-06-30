@@ -28,7 +28,14 @@ document.addEventListener('DOMContentLoaded', () => {
   dropArea.addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', handleFileSelect, false);
   processBtn.addEventListener('click', processFiles);
-  document.addEventListener('paste', handlePaste);
+  
+  // Add paste event listener to the whole document
+  document.addEventListener('paste', (e) => {
+    // Only handle if the paste is not in an input or textarea
+    if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+      handlePaste(e);
+    }
+  });
 
   function preventDefaults(e) {
     e.preventDefault();
@@ -46,33 +53,48 @@ document.addEventListener('DOMContentLoaded', () => {
   function handleDrop(e) {
     const dt = e.dataTransfer;
     const newFiles = Array.from(dt.files);
-    addFiles(newFiles);
+    handleNewFiles(newFiles);
   }
 
   function handleFileSelect(e) {
     const newFiles = Array.from(e.target.files);
-    addFiles(newFiles);
+    handleNewFiles(newFiles);
+    // Reset the input to allow selecting the same file again
+    e.target.value = '';
   }
 
   function handlePaste(e) {
     const items = (e.clipboardData || window.clipboardData).items;
     if (!items) return;
 
-    for (const item of items) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
       if (item.kind === 'file') {
         const blob = item.getAsFile();
-        if (blob && blob.type.startsWith('image/')) {
-          addFiles([blob]);
+        if (blob && (blob.type.startsWith('image/') || blob.type === 'application/pdf')) {
+          // Create a new file with a proper name
+          const fileName = `pasted-${Date.now()}.${blob.type.split('/')[1] || 'png'}`;
+          const file = new File([blob], fileName, { type: blob.type });
+          handleNewFiles([file]);
           break;
         }
       }
     }
   }
 
-  function addFiles(newFiles) {
-    if (newFiles.length > 0) {
-      files = [...files, ...newFiles];
-      updateFileList();
+  function handleNewFiles(newFiles) {
+    if (newFiles && newFiles.length > 0) {
+      // Filter out non-PDF and non-image files
+      const validFiles = newFiles.filter(file => 
+        file.type.startsWith('image/') || file.type === 'application/pdf'
+      );
+      
+      if (validFiles.length > 0) {
+        files = [...files, ...validFiles];
+        updateFileList();
+      } else if (newFiles.length > 0) {
+        showStatus('Please upload only image or PDF files', 'error');
+      }
     }
   }
 
@@ -123,45 +145,67 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function processFiles() {
-    if (files.length === 0) return;
+    if (files.length === 0) {
+      showStatus('Please add files to process', 'error');
+      return;
+    }
 
     processBtn.disabled = true;
-    statusDiv.textContent = 'Processing...';
+    showStatus('Processing files... This may take a minute.', 'info');
     resultDiv.innerHTML = '';
 
     try {
-      for (const file of files) {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('filename', file.name);
-        formData.append('contentType', file.type);
+      const formData = new FormData();
+      
+      // Add each file to the form data
+      files.forEach((file) => {
+        formData.append('files', file);
+      });
 
-        const response = await fetch('/.netlify/functions/process-invoice', {
-          method: 'POST',
-          body: formData
-        });
+      const response = await fetch('/.netlify/functions/process-invoice', {
+        method: 'POST',
+        body: formData
+      });
 
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+      if (!response.ok) {
+        let errorMsg = 'Failed to process files';
+        try {
+          const errorData = await response.json();
+          errorMsg = errorData.error || errorData.message || errorMsg;
+        } catch (e) {
+          errorMsg = `Server error: ${response.status} ${response.statusText}`;
         }
+        throw new Error(errorMsg);
+      }
 
-        const blob = await response.blob();
+      // Handle the response as a blob (for file download)
+      const blob = await response.blob();
+      
+      // Check if the response is actually an Excel file
+      if (blob.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || 
+          blob.type === 'application/octet-stream') {
         const url = window.URL.createObjectURL(blob);
         
+        // Create download link
         const a = document.createElement('a');
         a.href = url;
-        a.download = `processed_${file.name.replace(/\.[^/.]+$/, '')}.xlsx`;
-        a.textContent = `Download ${file.name}`;
-        a.className = 'download-link';
+        a.download = `invoice_${new Date().toISOString().split('T')[0]}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
         
-        resultDiv.appendChild(document.createElement('br'));
-        resultDiv.appendChild(a);
+        showStatus('Processing complete! File downloaded.', 'success');
+      } else {
+        // If the response is not an Excel file, try to read it as text
+        const text = await blob.text();
+        console.error('Unexpected response:', text);
+        throw new Error('The server returned an unexpected response format');
       }
       
-      statusDiv.textContent = 'Processing complete!';
     } catch (error) {
-      console.error('Error:', error);
-      statusDiv.textContent = `Error: ${error.message}`;
+      console.error('Error processing files:', error);
+      showStatus(`Error: ${error.message || 'Failed to process files. Please try again.'}`, 'error');
     } finally {
       processBtn.disabled = false;
     }

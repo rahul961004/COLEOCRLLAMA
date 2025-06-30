@@ -18,46 +18,56 @@ async function parseMultipartFormData(event) {
   const boundary = event.headers['content-type'].split('boundary=')[1];
   const body = Buffer.from(event.body, 'base64');
   const parts = body.toString('binary').split(`--${boundary}`);
-
+  
+  const files = [];
+  
   for (const part of parts) {
-    if (part.includes('Content-Disposition: form-data; name="file"')) {
+    if (part.includes('Content-Disposition: form-data; name="files"')) {
       const filenameMatch = part.match(/filename="([^"]+)"/);
       if (!filenameMatch) continue;
-
+      
       const filename = filenameMatch[1];
       const contentTypeMatch = part.match(/Content-Type: ([^\r\n]+)/);
       const contentType = contentTypeMatch ? contentTypeMatch[1].trim() : 'application/octet-stream';
-
+      
       // Extract file content
       const fileContentMatch = part.match(/\r\n\r\n([\s\S]*?)\r\n--/);
       if (!fileContentMatch) continue;
-
+      
       const fileContent = Buffer.from(fileContentMatch[1], 'binary');
-
-      return {
+      
+      files.push({
         filename,
         contentType,
         file: fileContent
-      };
+      });
     }
   }
-
-  throw new Error('No file found in form data');
+  
+  if (files.length === 0) {
+    throw new Error('No files found in the request');
+  }
+  
+  return files;
 }
 
 // Helper function to wait for run completion
 async function waitForRunCompletion(threadId, runId) {
   let run = await openai.beta.threads.runs.retrieve(threadId, runId);
-
-  while (run.status === 'queued' || run.status === 'in_progress') {
-    await new Promise(resolve => setTimeout(resolve, 1000));
+  
+  let attempts = 0;
+  const maxAttempts = 30; // 30 seconds max
+  
+  while ((run.status === 'queued' || run.status === 'in_progress') && attempts < maxAttempts) {
+    await new Promise(resolve => setTimeout(resolve, 2000)); // Check every 2 seconds
     run = await openai.beta.threads.runs.retrieve(threadId, runId);
+    attempts++;
   }
-
-  if (run.status === 'failed') {
-    throw new Error(`Run failed: ${run.last_error?.message || 'Unknown error'}`);
+  
+  if (run.status !== 'completed') {
+    throw new Error(`Run did not complete successfully. Status: ${run.status}, Last error: ${run.last_error?.message || 'None'}`);
   }
-
+  
   return run;
 }
 
@@ -69,7 +79,7 @@ exports.handler = async (event) => {
       headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       },
       body: ''
     };
@@ -87,80 +97,124 @@ exports.handler = async (event) => {
   }
 
   try {
-    // Parse the uploaded file
-    const { filename, file: fileBuffer, contentType } = await parseMultipartFormData(event);
-
-    // Upload file to OpenAI
-    const openaiFile = await openai.files.create({
-      file: fileBuffer,
-      purpose: 'assistants'
+    // Parse the uploaded files
+    const files = await parseMultipartFormData(event);
+    
+    if (files.length === 0) {
+      throw new Error('No valid files were uploaded. Please upload image or PDF files.');
+    }
+    
+    console.log(`Processing ${files.length} files...`);
+    
+    // Process each file and collect promises
+    const processPromises = files.map(async (file, index) => {
+      console.log(`Uploading file ${index + 1}/${files.length}: ${file.filename}`);
+      
+      // Upload file to OpenAI
+      const openaiFile = await openai.files.create({
+        file: file.file,
+        purpose: 'assistants'
+      });
+      
+      try {
+        console.log(`Processing file ${index + 1} with OCR...`);
+        
+        // Step 1: Process with OCR Assistant
+        const ocrThread = await openai.beta.threads.create({
+          messages: [{
+            role: 'user',
+            content: 'Please extract all the data from this invoice in a structured JSON format.',
+            file_ids: [openaiFile.id]
+          }]
+        });
+        
+        const ocrRun = await openai.beta.threads.runs.create(
+          ocrThread.id,
+          { assistant_id: ASSISTANTS.OCR }
+        );
+        
+        // Wait for OCR processing to complete
+        console.log(`Waiting for OCR to complete for file ${index + 1}...`);
+        await waitForRunCompletion(ocrThread.id, ocrRun.id);
+        
+        // Get the OCR results
+        const ocrMessages = await openai.beta.threads.messages.list(ocrThread.id);
+        const ocrContent = ocrMessages.data[0].content[0];
+        
+        if (ocrContent.type !== 'text' || !ocrContent.text) {
+          throw new Error('Unexpected response format from OCR assistant');
+        }
+        
+        return {
+          filename: file.filename,
+          content: ocrContent.text.value
+        };
+      } finally {
+        // Clean up the uploaded file
+        try {
+          await openai.files.del(openaiFile.id);
+        } catch (e) {
+          console.warn(`Failed to delete file ${file.filename}:`, e);
+        }
+      }
     });
-
-    // Step 1: Process with OCR Assistant
-    const ocrThread = await openai.beta.threads.create({
-      messages: [{
-        role: 'user',
-        content: 'Please extract all the data from this invoice.',
-        file_ids: [openaiFile.id]
-      }]
-    });
-
-    const ocrRun = await openai.beta.threads.runs.create(
-      ocrThread.id,
-      { assistant_id: ASSISTANTS.OCR }
-    );
-
-    // Wait for OCR processing to complete
-    await waitForRunCompletion(ocrThread.id, ocrRun.id);
-
-    // Get the OCR results
-    const ocrMessages = await openai.beta.threads.messages.list(ocrThread.id);
-    const ocrResult = ocrMessages.data[0].content[0].text.value;
-
+    
+    // Wait for all files to be processed
+    const ocrResults = await Promise.all(processPromises);
+    
+    // Combine all OCR results with file names
+    const combinedResults = ocrResults.map(result => 
+      `=== ${result.filename } ===\n${result.content}`
+    ).join('\n\n');
+    
+    console.log('All files processed. Generating Excel...');
+    
     // Step 2: Process with Excel Assistant
     const excelThread = await openai.beta.threads.create({
       messages: [{
         role: 'user',
-        content: `Convert this invoice data into an Excel file:\n\n${ocrResult}`
+        content: `Convert these invoice data into a single Excel file with multiple sheets. Each invoice should be in a separate sheet named after the invoice number or filename.\n\n${combinedResults}`
       }]
     });
-
+    
     const excelRun = await openai.beta.threads.runs.create(
       excelThread.id,
       { assistant_id: ASSISTANTS.EXCEL }
     );
-
-    // Wait for Excel processing to complete
-    const finalRun = await waitForRunCompletion(excelThread.id, excelRun.id);
-
+    
+    console.log('Waiting for Excel generation to complete...');
+    await waitForRunCompletion(excelThread.id, excelRun.id);
+    
     // Get the Excel file ID from the assistant's response
     const excelMessages = await openai.beta.threads.messages.list(excelThread.id);
-    const excelFileId = excelMessages.data[0].file_ids[0];
-
+    const excelFileId = excelMessages.data[0].file_ids?.[0];
+    
     if (!excelFileId) {
-      throw new Error('No Excel file was generated');
+      throw new Error('No Excel file was generated by the assistant');
     }
-
+    
     // Download the Excel file
+    console.log('Downloading generated Excel file...');
     const excelFile = await openai.files.content(excelFileId);
     const excelBuffer = Buffer.from(await excelFile.arrayBuffer());
-
-    // Clean up uploaded files
+    
+    // Clean up the Excel file
     try {
-      await openai.files.del(openaiFile.id);
       await openai.files.del(excelFileId);
-    } catch (cleanupError) {
-      console.warn('Error cleaning up files:', cleanupError);
+    } catch (e) {
+      console.warn('Failed to delete Excel file:', e);
     }
-
+    
+    console.log('Sending response...');
+    
     // Return the Excel file
     return {
       statusCode: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'Content-Disposition': `attachment; filename="invoice_${Date.now()}.xlsx"`,
+        'Content-Disposition': `attachment; filename="invoices_${Date.now()}.xlsx"`,
         'Access-Control-Allow-Origin': '*',
-        'Cache-Control': 'no-cache',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
         'Expires': '0'
       },
