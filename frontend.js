@@ -144,6 +144,16 @@ document.addEventListener('DOMContentLoaded', () => {
     processBtn.disabled = files.length === 0;
   }
 
+  // Function to convert file to base64
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = error => reject(error);
+    });
+  }
+
   async function processFiles() {
     if (files.length === 0) {
       showStatus('Please add files to process', 'error');
@@ -151,20 +161,31 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     processBtn.disabled = true;
-    showStatus('Processing files... This may take a minute.', 'info');
+    showStatus('Processing files... This may take a few minutes.', 'info');
     resultDiv.innerHTML = '';
 
     try {
-      const formData = new FormData();
-      
-      // Add each file to the form data
-      files.forEach((file) => {
-        formData.append('files', file);
+      // Convert all files to base64
+      const fileProcessingPromises = files.map(async (file) => {
+        const base64Data = await fileToBase64(file);
+        return {
+          name: file.name,
+          type: file.type,
+          data: base64Data
+        };
       });
 
+      const fileData = await Promise.all(fileProcessingPromises);
+      
+      // Send to server for processing
       const response = await fetch('/.netlify/functions/process-invoice', {
         method: 'POST',
-        body: formData
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          files: fileData
+        })
       });
 
       if (!response.ok) {
@@ -172,35 +193,24 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
           const errorData = await response.json();
           errorMsg = errorData.error || errorData.message || errorMsg;
+          if (errorData.details) {
+            errorMsg += `\nDetails: ${JSON.stringify(errorData.details, null, 2)}`;
+          }
         } catch (e) {
           errorMsg = `Server error: ${response.status} ${response.statusText}`;
         }
         throw new Error(errorMsg);
       }
 
-      // Handle the response as a blob (for file download)
-      const blob = await response.blob();
+      // Handle the response as JSON
+      const result = await response.json();
       
-      // Check if the response is actually an Excel file
-      if (blob.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || 
-          blob.type === 'application/octet-stream') {
-        const url = window.URL.createObjectURL(blob);
-        
-        // Create download link
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `invoice_${new Date().toISOString().split('T')[0]}.xlsx`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        a.remove();
-        
-        showStatus('Processing complete! File downloaded.', 'success');
+      // Display the result in a readable format
+      if (result.data) {
+        resultDiv.textContent = JSON.stringify(result.data, null, 2);
+        showStatus('Processing complete!', 'success');
       } else {
-        // If the response is not an Excel file, try to read it as text
-        const text = await blob.text();
-        console.error('Unexpected response:', text);
-        throw new Error('The server returned an unexpected response format');
+        showStatus('Processing complete, but no data was returned.', 'warning');
       }
       
     } catch (error) {

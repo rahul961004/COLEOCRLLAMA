@@ -1,54 +1,72 @@
 const { OpenAI } = require('openai');
-const FormData = require('form-data');
-const { Readable } = require('stream');
+const { Agent } = require('@openai/agents');
+const { Buffer } = require('buffer');
 
 // Initialize OpenAI client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-// Assistant IDs
-const ASSISTANTS = {
-  OCR: 'asst_aNfZhZ89VDaG9gtVdmVR0QQn',
-  EXCEL: 'asst_bimEPdweitmELhnT9QIMAC0J'
-};
+// Initialize the OCR agent
+const ocrAgent = new Agent({
+  model: 'gpt-4-vision-preview',
+  systemMessage: `You are an expert at extracting structured data from invoices and receipts. 
+  Extract all relevant information including:
+  - Vendor details (name, address, contact)
+  - Invoice number and date
+  - Line items (description, quantity, unit price, total)
+  - Tax and total amounts
+  - Payment terms
+  - Any other relevant information
+  
+  Return the data in a structured JSON format.`
+});
 
-// Helper function to parse multipart form data
-async function parseMultipartFormData(event) {
-  const boundary = event.headers['content-type'].split('boundary=')[1];
-  const body = Buffer.from(event.body, 'base64');
-  const parts = body.toString('binary').split(`--${boundary}`);
-  
-  const files = [];
-  
-  for (const part of parts) {
-    if (part.includes('Content-Disposition: form-data; name="files"')) {
-      const filenameMatch = part.match(/filename="([^"]+)"/);
-      if (!filenameMatch) continue;
-      
-      const filename = filenameMatch[1];
-      const contentTypeMatch = part.match(/Content-Type: ([^\r\n]+)/);
-      const contentType = contentTypeMatch ? contentTypeMatch[1].trim() : 'application/octet-stream';
-      
-      // Extract file content
-      const fileContentMatch = part.match(/\r\n\r\n([\s\S]*?)\r\n--/);
-      if (!fileContentMatch) continue;
-      
-      const fileContent = Buffer.from(fileContentMatch[1], 'binary');
-      
-      files.push({
-        filename,
-        contentType,
-        file: fileContent
-      });
+// Helper function to process file with OCR agent
+async function processFileWithOCR(fileData) {
+  try {
+    const { name, type, data } = fileData;
+    
+    // Convert base64 to buffer
+    const buffer = Buffer.from(data, 'base64');
+    
+    // Create a file-like object for the agent
+    const file = {
+      name,
+      type,
+      data: buffer,
+      size: buffer.length
+    };
+    
+    // Process the file with the OCR agent
+    const response = await ocrAgent.run({
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Extract all data from this invoice.' },
+          { type: 'file', file }
+        ]
+      }]
+    });
+    
+    // Extract the structured data from the response
+    const result = response.choices?.[0]?.message?.content;
+    if (!result) {
+      throw new Error('No content in agent response');
     }
+    
+    // Try to parse the result as JSON
+    try {
+      return JSON.parse(result);
+    } catch (e) {
+      console.warn('Failed to parse agent response as JSON, returning as text');
+      return { text: result };
+    }
+    
+  } catch (error) {
+    console.error('Error processing file with OCR:', error);
+    throw new Error(`Failed to process file: ${error.message}`);
   }
-  
-  if (files.length === 0) {
-    throw new Error('No files found in the request');
-  }
-  
-  return files;
 }
 
 // Helper function to wait for run completion
@@ -71,6 +89,7 @@ async function waitForRunCompletion(threadId, runId) {
   return run;
 }
 
+// Main handler function
 exports.handler = async (event) => {
   // Handle CORS preflight
   if (event.httpMethod === 'OPTIONS') {
@@ -85,141 +104,93 @@ exports.handler = async (event) => {
     };
   }
 
+  // Only allow POST requests
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
       headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'
       },
-      body: JSON.stringify({ message: 'Method not allowed' })
+      body: JSON.stringify({ error: 'Method not allowed' })
     };
   }
 
   try {
-    // Parse the uploaded files
-    const files = await parseMultipartFormData(event);
-    
-    if (files.length === 0) {
-      throw new Error('No valid files were uploaded. Please upload image or PDF files.');
+    // Parse the request body
+    let files = [];
+    try {
+      const body = JSON.parse(event.body || '{}');
+      files = Array.isArray(body.files) ? body.files : [];
+    } catch (e) {
+      console.error('Error parsing request body:', e);
+      return {
+        statusCode: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        },
+        body: JSON.stringify({ error: 'Invalid request body' })
+      };
     }
-    
+
+    if (files.length === 0) {
+      return {
+        statusCode: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        },
+        body: JSON.stringify({ error: 'No files provided' })
+      };
+    }
+
     console.log(`Processing ${files.length} files...`);
     
-    // Process each file and collect promises
-    const processPromises = files.map(async (file, index) => {
-      console.log(`Uploading file ${index + 1}/${files.length}: ${file.filename}`);
-      
-      // Upload file to OpenAI
-      const openaiFile = await openai.files.create({
-        file: file.file,
-        purpose: 'assistants'
-      });
-      
-      try {
-        console.log(`Processing file ${index + 1} with OCR...`);
-        
-        // Step 1: Process with OCR Assistant
-        const ocrThread = await openai.beta.threads.create({
-          messages: [{
-            role: 'user',
-            content: 'Please extract all the data from this invoice in a structured JSON format.',
-            file_ids: [openaiFile.id]
-          }]
-        });
-        
-        const ocrRun = await openai.beta.threads.runs.create(
-          ocrThread.id,
-          { assistant_id: ASSISTANTS.OCR }
-        );
-        
-        // Wait for OCR processing to complete
-        console.log(`Waiting for OCR to complete for file ${index + 1}...`);
-        await waitForRunCompletion(ocrThread.id, ocrRun.id);
-        
-        // Get the OCR results
-        const ocrMessages = await openai.beta.threads.messages.list(ocrThread.id);
-        const ocrContent = ocrMessages.data[0].content[0];
-        
-        if (ocrContent.type !== 'text' || !ocrContent.text) {
-          throw new Error('Unexpected response format from OCR assistant');
-        }
-        
-        return {
-          filename: file.filename,
-          content: ocrContent.text.value
-        };
-      } finally {
-        // Clean up the uploaded file
-        try {
-          await openai.files.del(openaiFile.id);
-        } catch (e) {
-          console.warn(`Failed to delete file ${file.filename}:`, e);
-        }
-      }
-    });
-    
-    // Wait for all files to be processed
-    const ocrResults = await Promise.all(processPromises);
-    
-    // Combine all OCR results with file names
-    const combinedResults = ocrResults.map(result => 
-      `=== ${result.filename } ===\n${result.content}`
-    ).join('\n\n');
-    
-    console.log('All files processed. Generating Excel...');
-    
-    // Step 2: Process with Excel Assistant
-    const excelThread = await openai.beta.threads.create({
-      messages: [{
-        role: 'user',
-        content: `Convert these invoice data into a single Excel file with multiple sheets. Each invoice should be in a separate sheet named after the invoice number or filename.\n\n${combinedResults}`
-      }]
-    });
-    
-    const excelRun = await openai.beta.threads.runs.create(
-      excelThread.id,
-      { assistant_id: ASSISTANTS.EXCEL }
+    // Process each file with the OCR agent
+    const processingPromises = files.map(file => 
+      processFileWithOCR(file).catch(error => ({
+        filename: file.name || 'unknown',
+        error: error.message,
+        success: false
+      }))
     );
     
-    console.log('Waiting for Excel generation to complete...');
-    await waitForRunCompletion(excelThread.id, excelRun.id);
+    // Wait for all files to be processed
+    const results = await Promise.all(processingPromises);
     
-    // Get the Excel file ID from the assistant's response
-    const excelMessages = await openai.beta.threads.messages.list(excelThread.id);
-    const excelFileId = excelMessages.data[0].file_ids?.[0];
-    
-    if (!excelFileId) {
-      throw new Error('No Excel file was generated by the assistant');
+    // Check for any processing errors
+    const hasErrors = results.some(result => result.error);
+    if (hasErrors) {
+      console.error('Some files failed to process:', results);
+      return {
+        statusCode: 207, // Multi-status
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        },
+        body: JSON.stringify({
+          message: 'Some files could not be processed',
+          results
+        })
+      };
     }
     
-    // Download the Excel file
-    console.log('Downloading generated Excel file...');
-    const excelFile = await openai.files.content(excelFileId);
-    const excelBuffer = Buffer.from(await excelFile.arrayBuffer());
-    
-    // Clean up the Excel file
-    try {
-      await openai.files.del(excelFileId);
-    } catch (e) {
-      console.warn('Failed to delete Excel file:', e);
-    }
-    
-    console.log('Sending response...');
-    
-    // Return the Excel file
+    // Return the extracted data
     return {
       statusCode: 200,
       headers: {
-        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'Content-Disposition': `attachment; filename="invoices_${Date.now()}.xlsx"`,
+        'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
         'Expires': '0'
       },
-      body: excelBuffer.toString('base64'),
-      isBase64Encoded: true
+      body: JSON.stringify({
+        success: true,
+        data: results,
+        processedAt: new Date().toISOString()
+      })
     };
 
   } catch (error) {
