@@ -286,17 +286,28 @@ exports.handler = async (event) => {
 
     // Check if any files were processed successfully
     const hasSuccess = results.some(r => r.success);
-    
-    // Return the results
+
+    // Prepare response headers
+    const headers = {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
+    };
+
+    // For OPTIONS requests, return early with just the headers
+    if (event.httpMethod === 'OPTIONS') {
+      return {
+        statusCode: 200,
+        headers,
+        body: ''
+      };
+    }
+
     return {
       statusCode: hasSuccess ? 200 : 400,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
-      },
+      headers,
       body: JSON.stringify({
         success: hasSuccess,
         timestamp: new Date().toISOString(),

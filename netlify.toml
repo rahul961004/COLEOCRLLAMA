@@ -5,28 +5,12 @@
 
 [build.environment]
   NODE_VERSION = "18"
-  NPM_FLAGS = "--prefix=netlify/functions"
 
 [functions]
   node_bundler = "esbuild"
   external_node_modules = ["openai", "node-fetch", "form-data"]
-  node_version = "18"
 
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
-
-[[headers]]
-  for = "/*"
-  [headers.values]
-    Access-Control-Allow-Origin = "*"
-    Access-Control-Allow-Methods = "GET, POST, OPTIONS"
-    Access-Control-Allow-Headers = "Content-Type, Authorization"
-
-[[headers]]
-  for = "/.netlify/functions/*"
-  [headers.values]
-    Access-Control-Allow-Origin = "*"
-    Access-Control-Allow-Methods = "POST, OPTIONS"
-    Access-Control-Allow-Headers = "Content-Type, Authorization"
