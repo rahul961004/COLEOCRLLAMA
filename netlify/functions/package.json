@@ -18,9 +18,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@openai/agents": "^0.1.0",
-    "openai": "^4.0.0",
-    "form-data": "^4.0.0"
+    "openai": "^4.0.0"
   },
   "engines": {
     "node": ">=18.0.0"

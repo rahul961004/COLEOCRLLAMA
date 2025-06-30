@@ -154,6 +154,49 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Function to format the extracted data for display
+  function formatExtractedData(data) {
+    if (!data) return 'No data extracted';
+    
+    // If it's an array, process each item
+    if (Array.isArray(data)) {
+      return data.map(item => formatExtractedData(item)).join('\n\n---\n\n');
+    }
+    
+    // If it's an object, format it nicely
+    if (typeof data === 'object') {
+      // If it has a 'text' property, use that
+      if (data.text) {
+        return data.text;
+      }
+      
+      // Otherwise, format the object as JSON
+      return Object.entries(data)
+        .map(([key, value]) => {
+          if (typeof value === 'object') {
+            return `<strong>${key}:</strong>\n${JSON.stringify(value, null, 2)}`;
+          }
+          return `<strong>${key}:</strong> ${value}`;
+        })
+        .join('\n\n');
+    }
+    
+    // For any other type, convert to string
+    return String(data);
+  }
+
+  // Function to create a download link for the extracted data
+  function createDownloadLink(data, filename) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename || 'extracted-data'}.json`;
+    a.className = 'download-link';
+    a.textContent = 'Download as JSON';
+    return a;
+  }
+
   async function processFiles() {
     if (files.length === 0) {
       showStatus('Please add files to process', 'error');
@@ -207,7 +250,45 @@ document.addEventListener('DOMContentLoaded', () => {
       
       // Display the result in a readable format
       if (result.data) {
-        resultDiv.textContent = JSON.stringify(result.data, null, 2);
+        // Clear previous results
+        resultDiv.innerHTML = '';
+        
+        // Add a section for each processed file
+        result.data.forEach((fileResult, index) => {
+          const fileSection = document.createElement('div');
+          fileSection.className = 'result-section';
+          
+          const fileName = files[index]?.name || `File ${index + 1}`;
+          const header = document.createElement('h3');
+          header.textContent = `Results for: ${fileName}`;
+          fileSection.appendChild(header);
+          
+          if (fileResult.error) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.textContent = `Error: ${fileResult.error}`;
+            fileSection.appendChild(errorDiv);
+          } else {
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'result-content';
+            
+            // Format the extracted data
+            const formattedData = formatExtractedData(fileResult);
+            
+            // Use innerHTML for formatted content
+            contentDiv.innerHTML = `<pre>${formattedData}</pre>`;
+            
+            // Add download link
+            const downloadLink = createDownloadLink(fileResult, `extracted-${fileName.replace(/\.[^/.]+$/, '')}`);
+            contentDiv.appendChild(document.createElement('br'));
+            contentDiv.appendChild(downloadLink);
+            
+            fileSection.appendChild(contentDiv);
+          }
+          
+          resultDiv.appendChild(fileSection);
+        });
+        
         showStatus('Processing complete!', 'success');
       } else {
         showStatus('Processing complete, but no data was returned.', 'warning');

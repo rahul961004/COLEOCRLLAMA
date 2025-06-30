@@ -1,5 +1,4 @@
 const { OpenAI } = require('openai');
-const { Agent } = require('@openai/agents');
 const { Buffer } = require('buffer');
 
 // Initialize OpenAI client
@@ -7,60 +6,93 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-// Initialize the OCR agent
-const ocrAgent = new Agent({
-  model: 'gpt-4-vision-preview',
-  systemMessage: `You are an expert at extracting structured data from invoices and receipts. 
-  Extract all relevant information including:
-  - Vendor details (name, address, contact)
-  - Invoice number and date
-  - Line items (description, quantity, unit price, total)
-  - Tax and total amounts
-  - Payment terms
-  - Any other relevant information
-  
-  Return the data in a structured JSON format.`
-});
+// Assistant ID for the OCR assistant
+const ASSISTANT_ID = 'asst_aNfZhZ89VDaG9gtVdmVR0QQn'; // Replace with your assistant ID
 
-// Helper function to process file with OCR agent
+/**
+ * Uploads a file to OpenAI and returns the file ID
+ */
+async function uploadFileToOpenAI(fileData) {
+  const { name, type, data } = fileData;
+  const buffer = Buffer.from(data, 'base64');
+  
+  const file = await openai.files.create({
+    file: buffer,
+    purpose: 'assistants',
+    filename: name
+  });
+  
+  return file.id;
+}
+
+/**
+ * Processes a file with the OCR assistant
+ */
 async function processFileWithOCR(fileData) {
   try {
-    const { name, type, data } = fileData;
+    // Upload the file to OpenAI
+    const fileId = await uploadFileToOpenAI(fileData);
     
-    // Convert base64 to buffer
-    const buffer = Buffer.from(data, 'base64');
-    
-    // Create a file-like object for the agent
-    const file = {
-      name,
-      type,
-      data: buffer,
-      size: buffer.length
-    };
-    
-    // Process the file with the OCR agent
-    const response = await ocrAgent.run({
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'text', text: 'Extract all data from this invoice.' },
-          { type: 'file', file }
-        ]
-      }]
+    // Create a thread and run the assistant
+    const thread = await openai.beta.threads.create({
+      messages: [
+        {
+          role: 'user',
+          content: 'Extract all data from this invoice in a structured JSON format.',
+          file_ids: [fileId]
+        }
+      ]
     });
     
-    // Extract the structured data from the response
-    const result = response.choices?.[0]?.message?.content;
-    if (!result) {
-      throw new Error('No content in agent response');
+    // Run the assistant
+    const run = await openai.beta.threads.runs.create(
+      thread.id,
+      { 
+        assistant_id: ASSISTANT_ID,
+        instructions: `You are an expert at extracting structured data from invoices and receipts. 
+        Extract all relevant information including:
+        - Vendor details (name, address, contact)
+        - Invoice number and date
+        - Line items (description, quantity, unit price, total)
+        - Tax and total amounts
+        - Payment terms
+        - Any other relevant information
+        
+        Return the data in a structured JSON format.`
+      }
+    );
+    
+    // Wait for the run to complete
+    const completedRun = await waitForRunCompletion(thread.id, run.id);
+    
+    if (completedRun.status !== 'completed') {
+      throw new Error(`Run failed with status: ${completedRun.status}`);
+    }
+    
+    // Get the messages from the thread
+    const messages = await openai.beta.threads.messages.list(thread.id);
+    const lastMessage = messages.data[0];
+    
+    if (!lastMessage || !lastMessage.content || lastMessage.content.length === 0) {
+      throw new Error('No response from assistant');
+    }
+    
+    // Extract the text content from the message
+    const textContent = lastMessage.content
+      .filter(part => part.type === 'text')
+      .map(part => part.text.value)
+      .join('\n');
+    
+    if (!textContent) {
+      throw new Error('No text content in the assistant response');
     }
     
     // Try to parse the result as JSON
     try {
-      return JSON.parse(result);
+      return JSON.parse(textContent);
     } catch (e) {
-      console.warn('Failed to parse agent response as JSON, returning as text');
-      return { text: result };
+      console.warn('Failed to parse assistant response as JSON, returning as text');
+      return { text: textContent };
     }
     
   } catch (error) {
@@ -69,21 +101,23 @@ async function processFileWithOCR(fileData) {
   }
 }
 
-// Helper function to wait for run completion
+/**
+ * Waits for a run to complete and returns the final run status
+ */
 async function waitForRunCompletion(threadId, runId) {
-  let run = await openai.beta.threads.runs.retrieve(threadId, runId);
-  
+  let run = await openai.threads.runs.retrieve(threadId, runId);
   let attempts = 0;
-  const maxAttempts = 30; // 30 seconds max
+  const maxAttempts = 60; // 60 seconds max wait time
   
+  // Wait for the run to complete
   while ((run.status === 'queued' || run.status === 'in_progress') && attempts < maxAttempts) {
-    await new Promise(resolve => setTimeout(resolve, 2000)); // Check every 2 seconds
-    run = await openai.beta.threads.runs.retrieve(threadId, runId);
+    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+    run = await openai.threads.runs.retrieve(threadId, runId);
     attempts++;
   }
   
-  if (run.status !== 'completed') {
-    throw new Error(`Run did not complete successfully. Status: ${run.status}, Last error: ${run.last_error?.message || 'None'}`);
+  if (attempts >= maxAttempts) {
+    throw new Error('Run timed out');
   }
   
   return run;
