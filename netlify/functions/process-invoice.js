@@ -17,10 +17,11 @@ function createErrorResponse(statusCode, message, details = null) {
     headers: {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       'Access-Control-Allow-Methods': 'POST, OPTIONS'
     },
     body: JSON.stringify({
+      success: false,
       error: message,
       ...(details && { details })
     })
@@ -37,6 +38,7 @@ async function uploadFileToOpenAI(fileData) {
     
     const buffer = Buffer.from(data, 'base64');
     
+    // Upload the file to OpenAI
     const file = await openai.files.create({
       file: buffer,
       purpose: 'assistants',
@@ -45,6 +47,7 @@ async function uploadFileToOpenAI(fileData) {
     
     console.log(`File uploaded successfully. File ID: ${file.id}`);
     return file.id;
+    
   } catch (error) {
     console.error('Error uploading file to OpenAI:', error);
     throw new Error(`Failed to upload file: ${error.message}`);
@@ -56,33 +59,42 @@ async function uploadFileToOpenAI(fileData) {
  */
 async function processFileWithOCR(fileData) {
   try {
-    // Upload the file to OpenAI
+    // 1. Upload the file to OpenAI
+    console.log('Starting file upload...');
     const fileId = await uploadFileToOpenAI(fileData);
     
-    // Create a thread and run the assistant
-    const thread = await openai.beta.threads.create({
-      messages: [
-        {
-          role: 'user',
-          content: 'Extract all data from this invoice in a structured JSON format.',
-          file_ids: [fileId]
-        }
-      ]
-    });
+    // 2. Create a thread
+    console.log('Creating thread...');
+    const thread = await openai.beta.threads.create();
     
-    // 3. Add the file to the thread
+    // 3. Add the file to the thread with a clear instruction
     console.log('Adding message to thread...');
-    await openai.beta.threads.messages.create(thread.id, {
-      role: 'user',
-      content: 'Please extract all the information from this file and return it in a structured JSON format.',
-      file_ids: [fileId]
-    });
+    await openai.beta.threads.messages.create(
+      thread.id,
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: 'Please extract all the information from this file and return it in a structured JSON format. Include fields like vendor_name, invoice_number, invoice_date, line_items, subtotal, tax, and total.'
+          },
+          {
+            type: 'file',
+            file_id: fileId
+          }
+        ]
+      }
+    );
     
     // 4. Run the assistant
     console.log('Running assistant...');
-    const run = await openai.beta.threads.runs.create(thread.id, {
-      assistant_id: ASSISTANT_ID
-    });
+    const run = await openai.beta.threads.runs.create(
+      thread.id,
+      {
+        assistant_id: ASSISTANT_ID,
+        instructions: 'You are an expert at extracting structured data from invoices and receipts. Extract all relevant information and return it in a clean JSON format.'
+      }
+    );
     
     console.log(`Run created with ID: ${run.id}`);
     
@@ -98,27 +110,32 @@ async function processFileWithOCR(fileData) {
     // 6. Get the assistant's response
     console.log('Retrieving assistant response...');
     const messages = await openai.beta.threads.messages.list(thread.id);
-    const assistantMessages = messages.data.filter(m => m.role === 'assistant');
+    const assistantMessages = messages.data
+      .filter(m => m.role === 'assistant' && m.content.length > 0);
     
     if (assistantMessages.length === 0) {
       throw new Error('No response from assistant');
     }
     
-    // 7. Extract the response
-    const response = assistantMessages[0].content[0];
+    // 7. Extract the response from the latest assistant message
+    const latestMessage = assistantMessages[0];
+    const response = latestMessage.content[0];
     
     if (response.type === 'text') {
       console.log('Received text response from assistant');
-      // Try to parse the response as JSON if it looks like JSON
+      // Try to extract JSON from code blocks
+      const textContent = response.text.value;
       try {
-        const jsonMatch = response.text.value.match(/```(?:json)?\n([\s\S]*?)\n```/);
+        // Try to find JSON in code blocks
+        const jsonMatch = textContent.match(/```(?:json)?\n([\s\S]*?)\n```/);
         if (jsonMatch) {
           return JSON.parse(jsonMatch[1]);
         }
-        return response.text.value;
+        // If no code block, try to parse the entire content as JSON
+        return JSON.parse(textContent);
       } catch (e) {
         console.log('Could not parse response as JSON, returning as text');
-        return response.text.value;
+        return { extracted_text: textContent };
       }
     } else if (response.type === 'file') {
       console.log('Received file response from assistant');
@@ -126,16 +143,9 @@ async function processFileWithOCR(fileData) {
     }
     
     return response;
-    // Try to parse the result as JSON
-    try {
-      return JSON.parse(textContent);
-    } catch (e) {
-      console.warn('Failed to parse assistant response as JSON, returning as text');
-      return { text: textContent };
-    }
     
   } catch (error) {
-    console.error('Error processing file with OCR:', error);
+    console.error('Error in processFileWithOCR:', error);
     throw new Error(`Failed to process file: ${error.message}`);
   }
 }
@@ -218,84 +228,94 @@ exports.handler = async (event) => {
   }
 
   try {
+    console.log('Received request with headers:', event.headers);
+    console.log('Request body length:', event.body?.length || 0);
+
     // Parse the request body
-    let files = [];
+    let body;
     try {
-      const body = JSON.parse(event.body || '{}');
-      files = Array.isArray(body.files) ? body.files : [];
+      body = JSON.parse(event.body);
     } catch (e) {
       console.error('Error parsing request body:', e);
-      return {
-        statusCode: 400,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*'
-        },
-        body: JSON.stringify({ error: 'Invalid request body' })
-      };
+      return createErrorResponse(400, 'Invalid JSON in request body');
     }
 
-    if (!Array.isArray(filesToProcess) || filesToProcess.length === 0) {
-      return createErrorResponse(400, 'No files provided for processing');
+    // Check for files in the request
+    if (!body.files || !Array.isArray(body.files) || body.files.length === 0) {
+      return createErrorResponse(400, 'No files provided in the request');
     }
 
-    console.log(`Processing ${filesToProcess.length} file(s)`);
+    console.log(`Processing ${body.files.length} file(s)...`);
 
-    // Process each file in parallel
-    const results = await Promise.all(
-      filesToProcess.map(async (file) => {
-        try {
-          console.log(`Processing file: ${file.name}`);
-          const result = await processFileWithOCR(file);
-          return {
-            fileName: file.name,
-            success: true,
-            data: result
-          };
-        } catch (error) {
-          console.error(`Error processing file ${file.name}:`, error);
-          return {
-            fileName: file.name,
-            success: false,
-            error: error.message
-          };
-        }
-      })
-    );
+    // Process each file
+    const results = [];
+    for (const [index, file] of body.files.entries()) {
+      if (!file.name || !file.data) {
+        console.error(`File at index ${index} is missing name or data`);
+        results.push({
+          fileName: file.name || `file-${index}`,
+          success: false,
+          error: 'Invalid file format. Each file must have a name and data.'
+        });
+        continue;
+      }
 
-    // Count successful and failed operations
-    const successful = results.filter(r => r.success).length;
-    const failed = results.length - successful;
+      try {
+        console.log(`Processing file ${index + 1}/${body.files.length}: ${file.name} (${file.data.length} bytes)`);
+        const result = await processFileWithOCR({
+          name: file.name,
+          data: file.data
+        });
+        
+        console.log(`Successfully processed file: ${file.name}`);
+        results.push({
+          fileName: file.name,
+          success: true,
+          data: result
+        });
+      } catch (error) {
+        console.error(`Error processing file ${file.name}:`, error);
+        results.push({
+          fileName: file.name,
+          success: false,
+          error: error.message,
+          stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+      }
+    }
+
+    // Check if any files were processed successfully
+    const hasSuccess = results.some(r => r.success);
     
-    console.log(`Processing complete. Success: ${successful}, Failed: ${failed}`);
-
     // Return the results
     return {
-      statusCode: 200,
+      statusCode: hasSuccess ? 200 : 400,
       headers: {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS'
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
       },
       body: JSON.stringify({
-        success: true,
-        processedCount: successful,
-        failedCount: failed,
-        data: results
-      })
+        success: hasSuccess,
+        timestamp: new Date().toISOString(),
+        processedCount: results.filter(r => r.success).length,
+        errorCount: results.filter(r => !r.success).length,
+        results
+      }, null, 2)
     };
+
   } catch (error) {
-    console.error('Unhandled error in handler:', error);
-    return createErrorResponse(
-      500, 
-      'Internal Server Error', 
-      process.env.NODE_ENV === 'development' ? error.stack : undefined
-    );
+    console.error('Unexpected error in handler:', error);
+    return createErrorResponse(500, 'Internal Server Error', {
+      message: error.message,
+      ...(process.env.NODE_ENV === 'development' ? { stack: error.stack } : {})
+    });
   }
 };
 
-// Helper function to wait for run completion
+// Helper function to wait for a run to complete
 async function waitForRunCompletion(threadId, runId, expectFile = false) {
   let run = await openai.beta.threads.runs.retrieve(threadId, runId);
   let attempts = 0;
