@@ -1,23 +1,24 @@
-# Invoice Processing with LlamaExtract
+# Invoice Processor with OpenAI Assistants
 
-An intelligent invoice processing system that extracts structured data from invoices using LlamaExtract's advanced OCR and LLM capabilities, validates the data, and stores it in an Excel file.
+A modern web application that processes invoices using OpenAI's powerful assistants. The application extracts structured data from invoice images/PDFs and converts them into well-formatted Excel files using a two-step assistant workflow.
 
 ## Features
 
-- **Advanced OCR & Data Extraction**: Uses LlamaExtract for state-of-the-art document understanding and data extraction
-- **Structured Output**: Extracts data into well-defined Pydantic models for type safety
-- **Multi-format Support**: Processes PDF, JPG, and PNG files
-- **Data Validation**: Validates the extracted data for completeness and correctness
-- **Excel Export**: Saves the processed data to an Excel file
-- **REST API**: Provides a simple API for processing and downloading invoices
+- **Drag & Drop Interface**: Simple and intuitive UI for uploading invoice files
+- **AI-Powered Processing**: Uses OpenAI's GPT-4o with vision for accurate data extraction
+- **Two-Step Workflow**: 
+  1. **Data Extraction**: Extracts structured data from invoices using Cole OCR Bot
+  2. **Excel Generation**: Converts extracted data into formatted Excel files using Cole Excel Maker
+- **Multi-format Support**: Handles PDF, JPG, and PNG files
+- **Responsive Design**: Works on both desktop and mobile devices
 
 ## Prerequisites
 
-- Python 3.8+
-- Llama Cloud API key (for LlamaExtract service)
-- OpenAI API key (for LLM processing)
+- Node.js 18+
+- Netlify account (for deployment)
+- OpenAI API key with access to Assistants API
 
-## Installation
+## Local Development
 
 1. Clone the repository:
    ```bash
@@ -25,74 +26,71 @@ An intelligent invoice processing system that extracts structured data from invo
    cd Llama-OCR
    ```
 
-2. Install dependencies:
+2. Install dependencies for Netlify functions:
    ```bash
-   pip install -r requirements.txt
+   cd netlify/functions
+   npm install
+   cd ../..
    ```
 
-3. Create a `.env` file with your API keys:
+3. Create a `.env` file in the root directory:
    ```
-   # Required: Get this from https://cloud.llamaindex.ai/
-   LLAMA_CLOUD_API_KEY=your_llama_cloud_api_key_here
-   
-   # Optional: Only needed if you want to use OpenAI for additional processing
-   # OPENAI_API_KEY=your_openai_api_key_here
+   OPENAI_API_KEY=your_openai_api_key_here
    ```
 
-## Usage
-
-### Command Line
-
-```bash
-python workflow.py --invoice path/to/your/invoice.pdf --output output/invoices.xlsx
-```
-
-### Web API
-
-1. Start the FastAPI server:
+4. Install Netlify CLI (if you want to test locally):
    ```bash
-   uvicorn app:app --reload
+   npm install -g netlify-cli
    ```
 
-2. API Endpoints
+5. Start the local development server:
+   ```bash
+   netlify dev
+   ```
+   The application will be available at `http://localhost:8888`
 
-- `POST /process-invoice/` - Process an uploaded invoice file (PDF, JPG, PNG)
-- `GET /download/{filename}` - Download a processed Excel file
-- `GET /health` - Health check endpoint
+## Deployment
+
+1. Push your code to a GitHub repository
+2. Connect the repository to Netlify
+3. Set the following environment variables in Netlify:
+   - `OPENAI_API_KEY`: Your OpenAI API key
+4. Deploy the site
 
 ## Project Structure
 
 ```
 .
-├── agents/                    # Agent implementations
-│   ├── __init__.py
-│   ├── base_agent.py          # Base class for all agents
-│   ├── llama_extract_agent.py # Handles document processing using LlamaExtract (OCR + data extraction)
-│   ├── data_validation_agent.py # Validates the extracted data
-│   ├── excel_writer_agent.py   # Writes data to Excel
-├── app.py                     # FastAPI application
-├── workflow.py                # Workflow orchestration
-├── requirements.txt           # Python dependencies
+├── netlify/
+│   └── functions/             # Serverless functions
+│       ├── process-invoice.js # Main invoice processing function
+│       └── package.json       # Function dependencies
+├── frontend.js               # Frontend JavaScript
+├── index.html                # Main HTML file
+├── netlify.toml              # Netlify configuration
 └── README.md                 # This file
 ```
 
 ## Environment Variables
 
-- `LLAMA_CLOUD_API_KEY`: Your Llama Cloud API key (required)
-- `OPENAI_API_KEY`: Your OpenAI API key (optional, for additional processing)
+- `OPENAI_API_KEY`: Your OpenAI API key with access to Assistants API (required)
 
-## Example Request
+## How It Works
 
-```bash
-# Process an invoice
-curl -X POST "http://localhost:8000/process-invoice/" \
-     -H "accept: application/json" \
-     -H "Content-Type: multipart/form-data" \
-     -F "file=@path/to/your/invoice.pdf"
+1. User uploads an invoice file (PDF, JPG, or PNG)
+2. The file is sent to the Netlify function
+3. The function uses two OpenAI assistants in sequence:
+   - **Cole OCR Bot**: Extracts structured data from the invoice
+   - **Cole Excel Maker**: Converts the extracted data into a formatted Excel file
+4. The generated Excel file is returned to the user for download
 
-# Download the processed Excel file
-curl -O http://localhost:8000/download/invoices.xlsx
-```
+## Example Usage
+
+1. Open the application in your browser
+2. Drag and drop an invoice file or click to select one
+3. Click "Process Files"
+4. Wait for processing to complete
+5. Download the generated Excel file
 
 ## License
 

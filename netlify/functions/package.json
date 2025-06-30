@@ -1,16 +1,24 @@
 {
-  "name": "llama-ocr-functions",
+  "name": "netlify-functions",
   "version": "1.0.0",
-  "description": "Netlify functions for Llama OCR",
+  "description": "Netlify functions for Invoice Processor",
   "main": "process-invoice.js",
-  "type": "module",
-  "dependencies": {
-    "form-data": "^4.0.0",
-    "node-fetch": "^3.3.2",
-    "form-data-node": "^1.0.0"
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "devDependencies": {
-    "@netlify/functions": "^2.0.0"
+  "keywords": [
+    "netlify",
+    "functions",
+    "invoice",
+    "processor",
+    "openai",
+    "assistants"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "openai": "^4.0.0",
+    "node-fetch": "^3.3.2"
   },
   "engines": {
     "node": ">=18.0.0"
