@@ -25,8 +25,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Handle dropped files
   dropArea.addEventListener('drop', handleDrop, false);
-  fileInput.addEventListener('change', handleFiles, false);
+  dropArea.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', handleFileSelect, false);
   processBtn.addEventListener('click', processFiles);
+  document.addEventListener('paste', handlePaste);
 
   function preventDefaults(e) {
     e.preventDefault();
@@ -44,13 +46,34 @@ document.addEventListener('DOMContentLoaded', () => {
   function handleDrop(e) {
     const dt = e.dataTransfer;
     const newFiles = Array.from(dt.files);
-    handleFiles({ target: { files: newFiles } });
+    addFiles(newFiles);
   }
 
-  function handleFiles(e) {
+  function handleFileSelect(e) {
     const newFiles = Array.from(e.target.files);
-    files = [...files, ...newFiles];
-    updateFileList();
+    addFiles(newFiles);
+  }
+
+  function handlePaste(e) {
+    const items = (e.clipboardData || window.clipboardData).items;
+    if (!items) return;
+
+    for (const item of items) {
+      if (item.kind === 'file') {
+        const blob = item.getAsFile();
+        if (blob && blob.type.startsWith('image/')) {
+          addFiles([blob]);
+          break;
+        }
+      }
+    }
+  }
+
+  function addFiles(newFiles) {
+    if (newFiles.length > 0) {
+      files = [...files, ...newFiles];
+      updateFileList();
+    }
   }
 
   function updateFileList() {
@@ -58,20 +81,42 @@ document.addEventListener('DOMContentLoaded', () => {
     files.forEach((file, index) => {
       const fileItem = document.createElement('div');
       fileItem.className = 'file-item';
-      fileItem.innerHTML = `
-        <span>${file.name}</span>
-        <button class="remove-btn" data-index="${index}">×</button>
-      `;
+      
+      // Create preview for images
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          fileItem.innerHTML = `
+            <div class="file-info">
+              <img src="${e.target.result}" class="file-preview" alt="Preview">
+              <span>${file.name} (${(file.size / 1024).toFixed(2)} KB)</span>
+            </div>
+            <button class="remove-btn" data-index="${index}">×</button>
+          `;
+          // Add event listener to the remove button
+          fileItem.querySelector('.remove-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            files.splice(index, 1);
+            updateFileList();
+          });
+        };
+        reader.readAsDataURL(file);
+      } else {
+        fileItem.innerHTML = `
+          <div class="file-info">
+            <span>${file.name} (${(file.size / 1024).toFixed(2)} KB)</span>
+          </div>
+          <button class="remove-btn" data-index="${index}">×</button>
+        `;
+        // Add event listener to the remove button
+        fileItem.querySelector('.remove-btn').addEventListener('click', (e) => {
+          e.stopPropagation();
+          files.splice(index, 1);
+          updateFileList();
+        });
+      }
+      
       fileList.appendChild(fileItem);
-    });
-
-    // Add event listeners to remove buttons
-    document.querySelectorAll('.remove-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        const index = parseInt(e.target.getAttribute('data-index'));
-        files.splice(index, 1);
-        updateFileList();
-      });
     });
 
     processBtn.disabled = files.length === 0;
@@ -80,97 +125,45 @@ document.addEventListener('DOMContentLoaded', () => {
   async function processFiles() {
     if (files.length === 0) return;
 
-    // Show loading state
     processBtn.disabled = true;
     statusDiv.textContent = 'Processing...';
     resultDiv.innerHTML = '';
 
     try {
-      // Process each file sequentially
       for (const file of files) {
-        await processFile(file);
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('filename', file.name);
+        formData.append('contentType', file.type);
+
+        const response = await fetch('/.netlify/functions/process-invoice', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `processed_${file.name.replace(/\.[^/.]+$/, '')}.xlsx`;
+        a.textContent = `Download ${file.name}`;
+        a.className = 'download-link';
+        
+        resultDiv.appendChild(document.createElement('br'));
+        resultDiv.appendChild(a);
       }
       
       statusDiv.textContent = 'Processing complete!';
     } catch (error) {
-      console.error('Error processing files:', error);
+      console.error('Error:', error);
       statusDiv.textContent = `Error: ${error.message}`;
     } finally {
       processBtn.disabled = false;
     }
-  }
-
-  async function processFile(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      
-      reader.onload = async (e) => {
-        try {
-          // Convert file to base64
-          const base64Data = e.target.result.split(',')[1];
-          
-          // Upload file to OpenAI
-          const uploadResponse = await fetch('https://api.openai.com/v1/files', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              file: base64Data,
-              purpose: 'assistants'
-            })
-          });
-
-          if (!uploadResponse.ok) {
-            throw new Error('Failed to upload file to OpenAI');
-          }
-
-          const { id: fileId } = await uploadResponse.json();
-          
-          // Process with our Netlify function
-          const response = await fetch('/.netlify/functions/process-invoice', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              file: fileId,
-              filename: file.name,
-              contentType: file.type
-            })
-          });
-
-          if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Failed to process file');
-          }
-
-          // Handle Excel file response
-          const blob = await response.blob();
-          const url = window.URL.createObjectURL(blob);
-          
-          // Create download link
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `processed_${file.name.replace(/\.[^/.]+$/, '')}.xlsx`;
-          a.textContent = `Download ${file.name}`;
-          a.className = 'download-link';
-          
-          resultDiv.appendChild(document.createElement('br'));
-          resultDiv.appendChild(a);
-          
-          resolve();
-        } catch (error) {
-          reject(error);
-        }
-      };
-      
-      reader.onerror = () => {
-        reject(new Error('Error reading file'));
-      };
-      
-      reader.readAsDataURL(file);
-    });
   }
 });

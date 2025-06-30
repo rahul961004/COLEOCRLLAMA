@@ -1,54 +1,183 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Invoice Processor</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            line-height: 1.6;
-        }
-        #drop-area {
-            border: 2px dashed #4CAF50;
-            border-radius: 8px;
-            padding: 40px;
-            text-align: center;
-            cursor: pointer;
-            margin: 20px 0;
-            transition: all 0.3s ease;
-        }
-        #drop-area:hover, #drop-area.highlight {
-            background-color: #f0f8f0;
-            border-color: #2E7D32;
-        }
-        #file-list {
-            margin: 20px 0;
-            max-height: 300px;
-            overflow-y: auto;
-            border: 1px solid #e0e0e0;
-            border-radius: 4px;
-            padding: 10px;
-        }
-        .file-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 15px;
-            border: 1px solid #e0e0e0;
-            border-radius: 4px;
-            margin-bottom: 8px;
-            background-color: #f9f9f9;
-            transition: all 0.2s ease;
-        }
-        .file-item:hover {
-            background-color: #f0f0f0;
-            transform: translateX(5px);
-        }
-        .remove-btn {
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Invoice Processor</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      line-height: 1.6;
+      color: #333;
+    }
+    h1 {
+      color: #2c3e50;
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    #drop-area {
+      border: 2px dashed #9b59b6;
+      border-radius: 12px;
+      padding: 50px 20px;
+      text-align: center;
+      cursor: pointer;
+      margin-bottom: 25px;
+      transition: all 0.3s ease;
+      background-color: #f9f5ff;
+    }
+    #drop-area:hover, #drop-area.highlight {
+      background-color: #f0e6ff;
+      border-color: #8e44ad;
+    }
+    #file-input {
+      display: none;
+    }
+    #file-list {
+      margin: 25px 0;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .file-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 15px;
+      border: 1px solid #e0e0e0;
+      margin-bottom: 8px;
+      border-radius: 8px;
+      background-color: #fff;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .file-item:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    .file-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex: 1;
+      overflow: hidden;
+    }
+    .file-preview {
+      width: 40px;
+      height: 40px;
+      object-fit: cover;
+      border-radius: 4px;
+      border: 1px solid #eee;
+    }
+    .file-info span {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    button {
+      background-color: #9b59b6;
+      color: white;
+      padding: 12px 24px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 500;
+      transition: all 0.2s ease;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    button:hover:not(:disabled) {
+      background-color: #8e44ad;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(155, 89, 182, 0.3);
+    }
+    button:disabled {
+      background-color: #bdc3c7;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    .remove-btn {
+      background-color: #e74c3c;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      line-height: 1;
+      margin-left: 10px;
+    }
+    .remove-btn:hover {
+      background-color: #c0392b;
+    }
+    #status {
+      margin: 20px 0;
+      padding: 15px;
+      border-radius: 6px;
+      font-weight: 500;
+      text-align: center;
+    }
+    .status-processing {
+      background-color: #e3f2fd;
+      color: #1976d2;
+    }
+    .status-success {
+      background-color: #e8f5e9;
+      color: #388e3c;
+    }
+    .status-error {
+      background-color: #ffebee;
+      color: #d32f2f;
+    }
+    .download-link {
+      display: inline-flex;
+      align-items: center;
+      margin: 10px 0;
+      padding: 10px 20px;
+      color: white;
+      text-decoration: none;
+      background-color: #2ecc71;
+      border-radius: 6px;
+      transition: all 0.2s ease;
+      font-weight: 500;
+    }
+    .download-link:hover {
+      background-color: #27ae60;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(46, 204, 113, 0.3);
+      text-decoration: none;
+    }
+    #result {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    @media (max-width: 600px) {
+      body {
+        padding: 15px;
+      }
+      #drop-area {
+        padding: 30px 15px;
+      }
+      .file-item {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .file-info {
+        width: 100%;
+        margin-bottom: 10px;
+      }
+      .remove-btn {
+        align-self: flex-end;
+      }
+    }
+  </style>
             background: #ff4444;
             color: white;
             border: none;
