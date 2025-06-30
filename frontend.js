@@ -147,10 +147,26 @@ document.addEventListener('DOMContentLoaded', () => {
   // Function to convert file to base64
   function fileToBase64(file) {
     return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result.split(',')[1]);
-      reader.onerror = error => reject(error);
+      try {
+        const reader = new FileReader();
+        reader.onload = () => {
+          // Remove the data URL prefix (e.g., "data:image/png;base64,")
+          const base64Data = reader.result.split(',')[1];
+          if (!base64Data) {
+            reject(new Error('Failed to convert file to base64'));
+            return;
+          }
+          resolve(base64Data);
+        };
+        reader.onerror = (error) => {
+          console.error('Error reading file:', error);
+          reject(new Error('Failed to read file'));
+        };
+        reader.readAsDataURL(file);
+      } catch (error) {
+        console.error('Error in fileToBase64:', error);
+        reject(error);
+      }
     });
   }
 
@@ -197,6 +213,13 @@ document.addEventListener('DOMContentLoaded', () => {
     return a;
   }
 
+  // Function to show status messages
+  function showStatus(message, type = 'info') {
+    statusDiv.textContent = message;
+    statusDiv.className = `status-${type}`;
+    console.log(`[${type}] ${message}`);
+  }
+
   async function processFiles() {
     if (files.length === 0) {
       showStatus('Please add files to process', 'error');
@@ -208,26 +231,58 @@ document.addEventListener('DOMContentLoaded', () => {
     resultDiv.innerHTML = '';
 
     try {
+      // Show loading state
+      const loadingIndicator = document.createElement('div');
+      loadingIndicator.className = 'loading-indicator';
+      loadingIndicator.innerHTML = `
+        <div class="spinner"></div>
+        <p>Processing ${files.length} file${files.length > 1 ? 's' : ''}...</p>
+      `;
+      resultDiv.appendChild(loadingIndicator);
+
       // Convert all files to base64
-      const fileProcessingPromises = files.map(async (file) => {
-        const base64Data = await fileToBase64(file);
-        return {
-          name: file.name,
-          type: file.type,
-          data: base64Data
-        };
+      showStatus(`Preparing ${files.length} file${files.length > 1 ? 's' : ''} for processing...`, 'info');
+      
+      const fileProcessingPromises = files.map(async (file, index) => {
+        try {
+          showStatus(`Processing file ${index + 1} of ${files.length}: ${file.name}`, 'info');
+          const base64Data = await fileToBase64(file);
+          return {
+            name: file.name,
+            type: file.type,
+            data: base64Data
+          };
+        } catch (error) {
+          console.error(`Error processing file ${file.name}:`, error);
+          return {
+            name: file.name,
+            error: `Failed to process file: ${error.message}`
+          };
+        }
       });
 
       const fileData = await Promise.all(fileProcessingPromises);
       
+      // Check if any files failed to process
+      const failedFiles = fileData.filter(file => file.error);
+      if (failedFiles.length > 0) {
+        console.error('Some files failed to process:', failedFiles);
+        showStatus(`${failedFiles.length} file${failedFiles.length > 1 ? 's' : ''} failed to process`, 'warning');
+      }
+      
+      // Remove loading indicator
+      resultDiv.innerHTML = '';
+      
       // Send to server for processing
+      showStatus('Sending files to server for processing...', 'info');
+      
       const response = await fetch('/.netlify/functions/process-invoice', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          files: fileData
+          files: fileData.filter(file => !file.error) // Only send successfully processed files
         })
       });
 
